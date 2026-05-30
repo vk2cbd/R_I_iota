@@ -1,5 +1,12 @@
 # Version History
 
+## 0.4.1-theta - Solar System Targets
+
+- Added a Target dropdown with Manual RA/DEC, Sun, and Moon options.
+- Sun/Moon modes calculate and display live RA/DEC values for the fringe model
+  and backend configuration.
+- Kept manual RA/DEC editing available for non-solar-system targets.
+
 ## 0.4.0-theta - Display Fringe Model
 
 - Branched from stable Eta for the start of Theta development.

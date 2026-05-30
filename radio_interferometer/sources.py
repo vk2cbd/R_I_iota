@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from math import asin, atan2, cos, degrees, pi, radians, sin
+from math import asin, atan2, cos, degrees, pi, radians, sin, sqrt
 from threading import Event, Lock, Thread
 from time import sleep
 
@@ -57,6 +57,15 @@ class FringeModel:
     delay_s: float
     phase_rad: float
     phase_rate_rad_s: float
+
+
+@dataclass(frozen=True)
+class TargetCoordinates:
+    """Right ascension and declination for a named sky target."""
+
+    name: str
+    ra_deg: float
+    dec_deg: float
 
 
 class SampleSource:
@@ -448,6 +457,74 @@ def activate_b210_stream_with_timed_start(sdr, rx_stream, has_time_flag: int) ->
     )
 
 
+def target_coordinates(target_name: str, when: datetime | None = None) -> TargetCoordinates:
+    """Return approximate geocentric RA/DEC for supported bright calibrators."""
+
+    if when is None:
+        when = datetime.now(timezone.utc)
+    target_name = target_name.strip().lower()
+    if target_name == "sun":
+        return sun_coordinates(when)
+    if target_name == "moon":
+        return moon_coordinates(when)
+    raise ValueError(f"Unsupported target source: {target_name}")
+
+
+def sun_coordinates(when: datetime) -> TargetCoordinates:
+    """Return low-precision apparent Sun RA/DEC in decimal degrees."""
+
+    jd = julian_date(when)
+    n = jd - 2451545.0
+    mean_longitude = normalize_degrees(280.460 + 0.9856474 * n)
+    mean_anomaly = radians(normalize_degrees(357.528 + 0.9856003 * n))
+    ecliptic_lon = normalize_degrees(
+        mean_longitude + 1.915 * sin(mean_anomaly) + 0.020 * sin(2.0 * mean_anomaly)
+    )
+    ra_deg, dec_deg = ecliptic_to_equatorial_degrees(ecliptic_lon, 0.0, mean_obliquity_degrees(jd))
+    return TargetCoordinates("Sun", ra_deg, dec_deg)
+
+
+def moon_coordinates(when: datetime) -> TargetCoordinates:
+    """Return low-precision geocentric Moon RA/DEC in decimal degrees."""
+
+    jd = julian_date(when)
+    d = jd - 2451543.5
+    ascending_node = radians(normalize_degrees(125.1228 - 0.0529538083 * d))
+    inclination = radians(5.1454)
+    arg_perigee = radians(normalize_degrees(318.0634 + 0.1643573223 * d))
+    eccentricity = 0.054900
+    mean_anomaly_deg = normalize_degrees(115.3654 + 13.0649929509 * d)
+    mean_anomaly = radians(mean_anomaly_deg)
+
+    eccentric_anomaly_deg = mean_anomaly_deg + degrees(
+        eccentricity * sin(mean_anomaly) * (1.0 + eccentricity * cos(mean_anomaly))
+    )
+    eccentric_anomaly = radians(eccentric_anomaly_deg)
+    xv = cos(eccentric_anomaly) - eccentricity
+    yv = sqrt(1.0 - eccentricity * eccentricity) * sin(eccentric_anomaly)
+    true_anomaly = atan2(yv, xv)
+    radius = sqrt(xv * xv + yv * yv)
+
+    longitude_arg = true_anomaly + arg_perigee
+    xh = radius * (
+        cos(ascending_node) * cos(longitude_arg)
+        - sin(ascending_node) * sin(longitude_arg) * cos(inclination)
+    )
+    yh = radius * (
+        sin(ascending_node) * cos(longitude_arg)
+        + cos(ascending_node) * sin(longitude_arg) * cos(inclination)
+    )
+    zh = radius * sin(longitude_arg) * sin(inclination)
+
+    obliquity = radians(mean_obliquity_degrees(jd))
+    xe = xh
+    ye = yh * cos(obliquity) - zh * sin(obliquity)
+    ze = yh * sin(obliquity) + zh * cos(obliquity)
+    ra_deg = normalize_degrees(degrees(atan2(ye, xe)))
+    dec_deg = degrees(atan2(ze, sqrt(xe * xe + ye * ye)))
+    return TargetCoordinates("Moon", ra_deg, dec_deg)
+
+
 def geometric_delay_seconds(config: ObservationConfig, when: datetime | None = None) -> float:
     """Return geometric delay for an east/north/up baseline."""
 
@@ -534,7 +611,19 @@ def horizontal_coordinates(
 def local_sidereal_time_degrees(when: datetime, lon_deg: float) -> float:
     """Approximate local apparent sidereal time for GUI/simulation use."""
 
-    when = when.astimezone(timezone.utc)
+    jd = julian_date(when)
+    d = jd - 2451545.0
+    gmst = 280.46061837 + 360.98564736629 * d
+    return (gmst + lon_deg) % 360.0
+
+
+def julian_date(when: datetime) -> float:
+    """Return Julian Date for a timezone-aware or naive UTC datetime."""
+
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    else:
+        when = when.astimezone(timezone.utc)
     year = when.year
     month = when.month
     day = when.day
@@ -547,7 +636,7 @@ def local_sidereal_time_degrees(when: datetime, lon_deg: float) -> float:
     day_fraction = (
         when.hour + when.minute / 60.0 + (when.second + when.microsecond / 1_000_000.0) / 3600.0
     ) / 24.0
-    jd = (
+    return (
         int(365.25 * (year + 4716))
         + int(30.6001 * (month + 1))
         + day
@@ -555,6 +644,25 @@ def local_sidereal_time_degrees(when: datetime, lon_deg: float) -> float:
         + b
         - 1524.5
     )
-    d = jd - 2451545.0
-    gmst = 280.46061837 + 360.98564736629 * d
-    return (gmst + lon_deg) % 360.0
+
+
+def mean_obliquity_degrees(jd: float) -> float:
+    return 23.439291 - 0.0000004 * (jd - 2451545.0)
+
+
+def ecliptic_to_equatorial_degrees(
+    ecliptic_lon_deg: float,
+    ecliptic_lat_deg: float,
+    obliquity_deg: float,
+) -> tuple[float, float]:
+    lon = radians(ecliptic_lon_deg)
+    lat = radians(ecliptic_lat_deg)
+    obliquity = radians(obliquity_deg)
+    x = cos(lon) * cos(lat)
+    y = sin(lon) * cos(lat) * cos(obliquity) - sin(lat) * sin(obliquity)
+    z = sin(lon) * cos(lat) * sin(obliquity) + sin(lat) * cos(obliquity)
+    return normalize_degrees(degrees(atan2(y, x))), degrees(asin(np.clip(z, -1.0, 1.0)))
+
+
+def normalize_degrees(value: float) -> float:
+    return value % 360.0

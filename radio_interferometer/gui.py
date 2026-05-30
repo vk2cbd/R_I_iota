@@ -23,11 +23,13 @@ from .correlator import (
     estimate_broadband_continuum_snr,
     estimate_peak_snr,
 )
-from .sources import ObservationConfig, fringe_model
+from .sources import ObservationConfig, fringe_model, target_coordinates
 
 GUI_REFRESH_MS = 80
 AVERAGING_DRAW_REFRESH_MS = 500
 SETTINGS_PATH = Path.home() / ".radio_interferometer_theta_settings.json"
+TARGET_SOURCE_OPTIONS = ("Manual RA/DEC", "Sun", "Moon")
+MANUAL_TARGET_SOURCE = TARGET_SOURCE_OPTIONS[0]
 PLOT_CONTROL_WIDTH = 0.055
 PLOT_CONTROL_HEIGHT = 0.026
 PLOT_CONTROL_GAP = 0.006
@@ -44,8 +46,8 @@ FIELD_DEFAULTS = [
     ("observing_frequency_mhz", "Observing freq (MHz)", "4800"),
     ("lnb_lo_frequency_mhz", "LNB LO freq (MHz)", "5950"),
     ("intermediate_frequency_mhz", "B210 tune IF (MHz)", "1150"),
-    ("ra_deg", "Source RA (deg)", "83.6331"),
-    ("dec_deg", "Source DEC (deg)", "22.0145"),
+    ("ra_deg", "Target RA (deg)", "83.6331"),
+    ("dec_deg", "Target DEC (deg)", "22.0145"),
     ("observer_lat_deg", "Observer lat (deg)", "-33.8688"),
     ("observer_lon_deg", "Observer lon (deg)", "151.2093"),
     ("bandwidth_mhz", "Bandwidth (MHz)", "30.72"),
@@ -120,6 +122,7 @@ VISIBILITY_CSV_FIELDS = [
 
 DEFAULT_SETTINGS = {
     "source_mode": "Simulator",
+    "target_mode": MANUAL_TARGET_SOURCE,
     "spectrum_plot_mode": "on",
     "phase_plot_mode": "off",
     "interferogram_autoscale": "on",
@@ -216,7 +219,7 @@ class InterferometryApp(tk.Tk):
         controls_canvas.bind("<Configure>", update_scroll_region)
 
         self.source_mode = tk.StringVar(value=self._settings["source_mode"])
-        ttk.Label(panel, text="Source").grid(row=0, column=0, sticky="w", pady=(0, 2))
+        ttk.Label(panel, text="Input").grid(row=0, column=0, sticky="w", pady=(0, 2))
         ttk.Combobox(
             panel,
             textvariable=self.source_mode,
@@ -225,11 +228,21 @@ class InterferometryApp(tk.Tk):
             width=18,
         ).grid(row=0, column=1, sticky="ew", pady=(0, 8))
 
+        self.target_mode = tk.StringVar(value=self._settings["target_mode"])
+        ttk.Label(panel, text="Target").grid(row=1, column=0, sticky="w", pady=3)
+        ttk.Combobox(
+            panel,
+            textvariable=self.target_mode,
+            values=TARGET_SOURCE_OPTIONS,
+            state="readonly",
+            width=18,
+        ).grid(row=1, column=1, sticky="ew", pady=3)
+
         self.spectrum_plot_mode = tk.StringVar(value=self._settings["spectrum_plot_mode"])
         self.phase_plot_mode = tk.StringVar(value=self._settings["phase_plot_mode"])
-        ttk.Label(panel, text="Spectrum plot").grid(row=1, column=0, sticky="w", pady=3)
+        ttk.Label(panel, text="Spectrum plot").grid(row=2, column=0, sticky="w", pady=3)
         spectrum_options = ttk.Frame(panel)
-        spectrum_options.grid(row=1, column=1, sticky="w", pady=3)
+        spectrum_options.grid(row=2, column=1, sticky="w", pady=3)
         ttk.Radiobutton(
             spectrum_options,
             text="On",
@@ -245,9 +258,9 @@ class InterferometryApp(tk.Tk):
             command=self._apply_plot_visibility,
         ).pack(side=tk.LEFT, padx=(8, 0))
 
-        ttk.Label(panel, text="Phase plot").grid(row=2, column=0, sticky="w", pady=3)
+        ttk.Label(panel, text="Phase plot").grid(row=3, column=0, sticky="w", pady=3)
         phase_options = ttk.Frame(panel)
-        phase_options.grid(row=2, column=1, sticky="w", pady=3)
+        phase_options.grid(row=3, column=1, sticky="w", pady=3)
         ttk.Radiobutton(
             phase_options,
             text="On",
@@ -278,9 +291,9 @@ class InterferometryApp(tk.Tk):
             value=self._settings["west_auto_spectrum_autoscale"]
         )
         self.fringe_iq_autoscale = tk.StringVar(value=self._settings["fringe_iq_autoscale"])
-        ttk.Label(panel, text="Spectrum scale").grid(row=3, column=0, sticky="w", pady=3)
+        ttk.Label(panel, text="Spectrum scale").grid(row=4, column=0, sticky="w", pady=3)
         spectrum_scale_options = ttk.Frame(panel)
-        spectrum_scale_options.grid(row=3, column=1, sticky="w", pady=3)
+        spectrum_scale_options.grid(row=4, column=1, sticky="w", pady=3)
         ttk.Radiobutton(
             spectrum_scale_options,
             text="Auto",
@@ -297,9 +310,9 @@ class InterferometryApp(tk.Tk):
         ).pack(side=tk.LEFT, padx=(8, 0))
 
         self.continuum_snr_mode = tk.StringVar(value=self._settings["continuum_snr_mode"])
-        ttk.Label(panel, text="Continuum SNR").grid(row=4, column=0, sticky="w", pady=3)
+        ttk.Label(panel, text="Continuum SNR").grid(row=5, column=0, sticky="w", pady=3)
         continuum_options = ttk.Frame(panel)
-        continuum_options.grid(row=4, column=1, sticky="w", pady=3)
+        continuum_options.grid(row=5, column=1, sticky="w", pady=3)
         ttk.Radiobutton(
             continuum_options,
             text="On",
@@ -314,9 +327,9 @@ class InterferometryApp(tk.Tk):
         ).pack(side=tk.LEFT, padx=(8, 0))
 
         self.record_visibility_mode = tk.StringVar(value=self._settings["record_visibility_mode"])
-        ttk.Label(panel, text="Record visibilities").grid(row=5, column=0, sticky="w", pady=3)
+        ttk.Label(panel, text="Record visibilities").grid(row=6, column=0, sticky="w", pady=3)
         record_options = ttk.Frame(panel)
-        record_options.grid(row=5, column=1, sticky="w", pady=3)
+        record_options.grid(row=6, column=1, sticky="w", pady=3)
         ttk.Radiobutton(
             record_options,
             text="On",
@@ -331,23 +344,25 @@ class InterferometryApp(tk.Tk):
         ).pack(side=tk.LEFT, padx=(8, 0))
 
         self.start_button = ttk.Button(panel, text="Start", command=self.start)
-        self.start_button.grid(row=6, column=0, sticky="ew", pady=(10, 3))
+        self.start_button.grid(row=7, column=0, sticky="ew", pady=(10, 3))
         self.stop_button = ttk.Button(panel, text="Stop", command=self.stop, state=tk.DISABLED)
-        self.stop_button.grid(row=6, column=1, sticky="ew", pady=(10, 3))
+        self.stop_button.grid(row=7, column=1, sticky="ew", pady=(10, 3))
 
         self.inputs: dict[str, tk.StringVar] = {}
-        for row, (key, label, default) in enumerate(FIELD_DEFAULTS, start=7):
+        self.input_entries: dict[str, ttk.Entry] = {}
+        for row, (key, label, default) in enumerate(FIELD_DEFAULTS, start=8):
             ttk.Label(panel, text=label).grid(row=row, column=0, sticky="w", pady=3)
             value = tk.StringVar(value=self._settings.get(key, default))
             self.inputs[key] = value
             entry = ttk.Entry(panel, textvariable=value, width=18)
+            self.input_entries[key] = entry
             if key == "observing_frequency_mhz":
                 entry.configure(state="readonly")
             entry.grid(row=row, column=1, sticky="ew", pady=3)
             if key != "observing_frequency_mhz":
                 self._bind_commit_entry(entry)
 
-        continuum_row = len(FIELD_DEFAULTS) + 7
+        continuum_row = len(FIELD_DEFAULTS) + 8
         self.continuum_inputs: dict[str, tk.StringVar] = {}
         for row, (key, label, default) in enumerate(CONTINUUM_FIELD_DEFAULTS, start=continuum_row):
             ttk.Label(panel, text=label).grid(row=row, column=0, sticky="w", pady=3)
@@ -397,6 +412,7 @@ class InterferometryApp(tk.Tk):
         panel.columnconfigure(1, weight=1)
 
         self._watch_control(self.source_mode)
+        self._watch_control(self.target_mode)
         self._watch_control(self.spectrum_plot_mode)
         self._watch_control(self.phase_plot_mode)
         self._watch_control(self.interferogram_autoscale)
@@ -408,6 +424,7 @@ class InterferometryApp(tk.Tk):
         self._watch_control(self.fringe_iq_autoscale)
         self._watch_control(self.continuum_snr_mode)
         self._watch_control(self.record_visibility_mode)
+        self._refresh_target_coordinate_fields(force=True)
 
     def _bind_commit_entry(self, entry: ttk.Entry) -> None:
         entry.bind("<Return>", self._commit_text_fields)
@@ -693,6 +710,7 @@ class InterferometryApp(tk.Tk):
 
     def start(self) -> None:
         try:
+            self._refresh_target_coordinate_fields(force=True)
             config = self._read_config()
             backend = CorrelatorBackendProcess(config, self.source_mode.get())
             backend.start()
@@ -1010,13 +1028,71 @@ class InterferometryApp(tk.Tk):
             lines.append("Stopped phase --")
         self.fringe_model_status.set("\n".join(lines))
 
+    def _target_mode_value(self) -> str:
+        if not hasattr(self, "target_mode"):
+            return MANUAL_TARGET_SOURCE
+        target_mode = self.target_mode.get()
+        if target_mode not in TARGET_SOURCE_OPTIONS:
+            return MANUAL_TARGET_SOURCE
+        return target_mode
+
+    def _target_adjusted_inputs(
+        self,
+        raw_inputs: dict[str, str],
+        when: datetime | None = None,
+    ) -> dict[str, str]:
+        adjusted = dict(raw_inputs)
+        target_mode = self._target_mode_value()
+        if target_mode != MANUAL_TARGET_SOURCE:
+            coords = target_coordinates(target_mode, when)
+            adjusted["ra_deg"] = f"{coords.ra_deg:.4f}"
+            adjusted["dec_deg"] = f"{coords.dec_deg:.4f}"
+        return adjusted
+
+    def _refresh_target_coordinate_fields(self, force: bool = False) -> None:
+        if not hasattr(self, "inputs") or not hasattr(self, "input_entries"):
+            return
+
+        target_mode = self._target_mode_value()
+        manual = target_mode == MANUAL_TARGET_SOURCE
+        for key in ("ra_deg", "dec_deg"):
+            entry = self.input_entries.get(key)
+            if entry is not None:
+                entry.configure(state=tk.NORMAL if manual else "readonly")
+
+        if manual:
+            return
+
+        try:
+            adjusted = self._target_adjusted_inputs(self._committed_inputs)
+        except ValueError as exc:
+            self.status.set(str(exc))
+            return
+
+        changed = any(
+            adjusted[key] != self._committed_inputs.get(key)
+            for key in ("ra_deg", "dec_deg")
+        )
+        if not force and not changed:
+            return
+
+        for key in ("ra_deg", "dec_deg"):
+            self._committed_inputs[key] = adjusted[key]
+            self.inputs[key].set(adjusted[key])
+        if not self._loading_settings:
+            self._save_settings()
+
     def _read_config(self, raw_inputs: dict[str, str] | None = None) -> ObservationConfig:
         raw_inputs = self._committed_inputs if raw_inputs is None else raw_inputs
+        raw_inputs = self._target_adjusted_inputs(raw_inputs)
+        target_mode = self._target_mode_value()
         values: dict[str, float | int | str] = {}
         for key, _, _default in FIELD_DEFAULTS:
             raw = raw_inputs[key].strip()
             if key == "b210_device_args":
                 values[key] = raw
+            elif key in {"ra_deg", "dec_deg"} and target_mode != MANUAL_TARGET_SOURCE:
+                values[key] = float(raw)
             elif key in {
                 "bins",
                 "averaging_blocks",
@@ -1093,6 +1169,7 @@ class InterferometryApp(tk.Tk):
     def _on_control_changed(self) -> None:
         if self._loading_settings:
             return
+        self._refresh_target_coordinate_fields(force=True)
         self._save_settings()
         self._apply_plot_visibility(draw=False)
         self._apply_plot_scales(draw=False)
@@ -1104,6 +1181,7 @@ class InterferometryApp(tk.Tk):
 
     def _commit_text_fields(self, _event=None) -> str:
         new_inputs = {key: value.get() for key, value in self.inputs.items()}
+        new_inputs = self._target_adjusted_inputs(new_inputs)
         new_continuum_inputs = {key: value.get() for key, value in self.continuum_inputs.items()}
         new_visibility_inputs = {key: value.get() for key, value in self.visibility_inputs.items()}
         new_scale_inputs = {key: value.get() for key, value in self.scale_inputs.items()}
@@ -1125,6 +1203,9 @@ class InterferometryApp(tk.Tk):
         ):
             new_inputs[key] = format_no_decimal(float(new_inputs[key]))
             self.inputs[key].set(new_inputs[key])
+        if self._target_mode_value() != MANUAL_TARGET_SOURCE:
+            for key in ("ra_deg", "dec_deg"):
+                self.inputs[key].set(new_inputs[key])
 
         self._committed_inputs = new_inputs
         self._committed_continuum_inputs = new_continuum_inputs
@@ -1149,6 +1230,7 @@ class InterferometryApp(tk.Tk):
             return True
 
         try:
+            self._refresh_target_coordinate_fields()
             config = self._read_config()
         except Exception as exc:
             self.status.set(f"Live settings not applied yet: {exc}")
@@ -1269,6 +1351,7 @@ class InterferometryApp(tk.Tk):
     def _save_settings(self) -> None:
         settings = {
             "source_mode": self.source_mode.get(),
+            "target_mode": self.target_mode.get(),
             "spectrum_plot_mode": self.spectrum_plot_mode.get(),
             "phase_plot_mode": self.phase_plot_mode.get(),
             "interferogram_autoscale": self.interferogram_autoscale.get(),
@@ -1471,6 +1554,8 @@ def load_settings() -> dict[str, str]:
                 settings[key] = str(value)
     if settings["source_mode"] not in {"Simulator", "B210 / SoapySDR"}:
         settings["source_mode"] = DEFAULT_SETTINGS["source_mode"]
+    if settings["target_mode"] not in TARGET_SOURCE_OPTIONS:
+        settings["target_mode"] = DEFAULT_SETTINGS["target_mode"]
     for key in (
         "spectrum_plot_mode",
         "phase_plot_mode",

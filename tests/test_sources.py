@@ -10,6 +10,7 @@ from radio_interferometer.sources import (
     geometric_delay_seconds,
     horizontal_coordinates,
     parse_device_args,
+    target_coordinates,
 )
 
 
@@ -67,6 +68,27 @@ def test_fringe_model_matches_geometric_delay_phase() -> None:
 def test_fringe_model_rejects_non_positive_rate_step() -> None:
     with pytest.raises(ValueError):
         fringe_model(make_config(), rate_step_s=0.0)
+
+
+def test_sun_target_coordinates_are_plausible() -> None:
+    coords = target_coordinates("Sun", datetime(2026, 5, 31, 0, 0, tzinfo=timezone.utc))
+
+    assert coords.name == "Sun"
+    assert 60.0 <= coords.ra_deg <= 80.0
+    assert 20.0 <= coords.dec_deg <= 25.0
+
+
+def test_moon_target_coordinates_are_in_expected_ranges() -> None:
+    coords = target_coordinates("Moon", datetime(2026, 5, 31, 0, 0, tzinfo=timezone.utc))
+
+    assert coords.name == "Moon"
+    assert 0.0 <= coords.ra_deg < 360.0
+    assert -90.0 <= coords.dec_deg <= 90.0
+
+
+def test_unknown_target_coordinates_are_rejected() -> None:
+    with pytest.raises(ValueError):
+        target_coordinates("Mars", datetime(2026, 5, 31, 0, 0, tzinfo=timezone.utc))
 
 
 def test_horizontal_coordinates_are_in_expected_ranges() -> None:
