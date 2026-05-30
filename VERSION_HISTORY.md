@@ -1,5 +1,12 @@
 # Version History
 
+## 0.4.2-theta - Spectrum Panel Scaling
+
+- Moved Cross-Correlation Spectrum manual Y-axis scaling out of the left GUI
+  and into the spectrum plot pane.
+- Reused the same compact Auto/Manual and min/max controls used by the other
+  plot panes.
+
 ## 0.4.1-theta - Solar System Targets
 
 - Added a Target dropdown with Manual RA/DEC, Sun, and Moon options.

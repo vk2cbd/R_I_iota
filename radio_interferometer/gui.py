@@ -65,14 +65,11 @@ FIELD_DEFAULTS = [
     ("b210_device_args", "B210 device args", "num_recv_frames=256"),
 ]
 
-SCALE_FIELD_DEFAULTS = [
-    ("spectrum_y_min", "Spectrum Y min", "0.0"),
-    ("spectrum_y_max", "Spectrum Y max", "1.0"),
-]
-
 PLOT_SCALE_DEFAULTS = [
     ("interferogram_y_min", "Interferogram Y min", "0.0"),
     ("interferogram_y_max", "Interferogram Y max", "1.0"),
+    ("spectrum_y_min", "Spectrum Y min", "0.0"),
+    ("spectrum_y_max", "Spectrum Y max", "1.0"),
     ("east_autocorr_y_min", "East autocorr Y min", "0.0"),
     ("east_autocorr_y_max", "East autocorr Y max", "1.0"),
     ("west_autocorr_y_min", "West autocorr Y min", "0.0"),
@@ -136,7 +133,6 @@ DEFAULT_SETTINGS = {
     "continuum_snr_mode": "on",
     "record_visibility_mode": "off",
     **{key: default for key, _, default in FIELD_DEFAULTS},
-    **{key: default for key, _, default in SCALE_FIELD_DEFAULTS},
     **{key: default for key, _, default in PLOT_SCALE_DEFAULTS},
     **{key: default for key, _, default in CONTINUUM_FIELD_DEFAULTS},
     **{key: default for key, _, default in VISIBILITY_FIELD_DEFAULTS},
@@ -168,9 +164,6 @@ class InterferometryApp(tk.Tk):
         self._committed_visibility_inputs = {
             key: self._settings.get(key, default) for key, _, default in VISIBILITY_FIELD_DEFAULTS
         }
-        self._committed_scale_inputs = {
-            key: self._settings.get(key, default) for key, _, default in SCALE_FIELD_DEFAULTS
-        }
         self._plot_scale_inputs = {
             key: self._settings.get(key, default) for key, _, default in PLOT_SCALE_DEFAULTS
         }
@@ -178,6 +171,7 @@ class InterferometryApp(tk.Tk):
         self._last_draw_time = 0.0
         self._last_visibility_record_time = 0.0
         self._last_interferogram_mag: np.ndarray | None = None
+        self._last_spectrum_envelope: np.ndarray | None = None
         self._last_east_autocorr_mag: np.ndarray | None = None
         self._last_west_autocorr_mag: np.ndarray | None = None
         self._last_east_auto_spectrum_mag: np.ndarray | None = None
@@ -291,28 +285,11 @@ class InterferometryApp(tk.Tk):
             value=self._settings["west_auto_spectrum_autoscale"]
         )
         self.fringe_iq_autoscale = tk.StringVar(value=self._settings["fringe_iq_autoscale"])
-        ttk.Label(panel, text="Spectrum scale").grid(row=4, column=0, sticky="w", pady=3)
-        spectrum_scale_options = ttk.Frame(panel)
-        spectrum_scale_options.grid(row=4, column=1, sticky="w", pady=3)
-        ttk.Radiobutton(
-            spectrum_scale_options,
-            text="Auto",
-            variable=self.spectrum_autoscale,
-            value="on",
-            command=self._apply_plot_scales,
-        ).pack(side=tk.LEFT)
-        ttk.Radiobutton(
-            spectrum_scale_options,
-            text="Manual",
-            variable=self.spectrum_autoscale,
-            value="off",
-            command=self._apply_plot_scales,
-        ).pack(side=tk.LEFT, padx=(8, 0))
 
         self.continuum_snr_mode = tk.StringVar(value=self._settings["continuum_snr_mode"])
-        ttk.Label(panel, text="Continuum SNR").grid(row=5, column=0, sticky="w", pady=3)
+        ttk.Label(panel, text="Continuum SNR").grid(row=4, column=0, sticky="w", pady=3)
         continuum_options = ttk.Frame(panel)
-        continuum_options.grid(row=5, column=1, sticky="w", pady=3)
+        continuum_options.grid(row=4, column=1, sticky="w", pady=3)
         ttk.Radiobutton(
             continuum_options,
             text="On",
@@ -327,9 +304,9 @@ class InterferometryApp(tk.Tk):
         ).pack(side=tk.LEFT, padx=(8, 0))
 
         self.record_visibility_mode = tk.StringVar(value=self._settings["record_visibility_mode"])
-        ttk.Label(panel, text="Record visibilities").grid(row=6, column=0, sticky="w", pady=3)
+        ttk.Label(panel, text="Record visibilities").grid(row=5, column=0, sticky="w", pady=3)
         record_options = ttk.Frame(panel)
-        record_options.grid(row=6, column=1, sticky="w", pady=3)
+        record_options.grid(row=5, column=1, sticky="w", pady=3)
         ttk.Radiobutton(
             record_options,
             text="On",
@@ -344,13 +321,13 @@ class InterferometryApp(tk.Tk):
         ).pack(side=tk.LEFT, padx=(8, 0))
 
         self.start_button = ttk.Button(panel, text="Start", command=self.start)
-        self.start_button.grid(row=7, column=0, sticky="ew", pady=(10, 3))
+        self.start_button.grid(row=6, column=0, sticky="ew", pady=(10, 3))
         self.stop_button = ttk.Button(panel, text="Stop", command=self.stop, state=tk.DISABLED)
-        self.stop_button.grid(row=7, column=1, sticky="ew", pady=(10, 3))
+        self.stop_button.grid(row=6, column=1, sticky="ew", pady=(10, 3))
 
         self.inputs: dict[str, tk.StringVar] = {}
         self.input_entries: dict[str, ttk.Entry] = {}
-        for row, (key, label, default) in enumerate(FIELD_DEFAULTS, start=8):
+        for row, (key, label, default) in enumerate(FIELD_DEFAULTS, start=7):
             ttk.Label(panel, text=label).grid(row=row, column=0, sticky="w", pady=3)
             value = tk.StringVar(value=self._settings.get(key, default))
             self.inputs[key] = value
@@ -362,7 +339,7 @@ class InterferometryApp(tk.Tk):
             if key != "observing_frequency_mhz":
                 self._bind_commit_entry(entry)
 
-        continuum_row = len(FIELD_DEFAULTS) + 8
+        continuum_row = len(FIELD_DEFAULTS) + 7
         self.continuum_inputs: dict[str, tk.StringVar] = {}
         for row, (key, label, default) in enumerate(CONTINUUM_FIELD_DEFAULTS, start=continuum_row):
             ttk.Label(panel, text=label).grid(row=row, column=0, sticky="w", pady=3)
@@ -382,17 +359,7 @@ class InterferometryApp(tk.Tk):
             entry.grid(row=row, column=1, sticky="ew", pady=3)
             self._bind_commit_entry(entry)
 
-        scale_row = visibility_row + len(VISIBILITY_FIELD_DEFAULTS)
-        self.scale_inputs: dict[str, tk.StringVar] = {}
-        for row, (key, label, default) in enumerate(SCALE_FIELD_DEFAULTS, start=scale_row):
-            ttk.Label(panel, text=label).grid(row=row, column=0, sticky="w", pady=3)
-            value = tk.StringVar(value=self._settings.get(key, default))
-            self.scale_inputs[key] = value
-            entry = ttk.Entry(panel, textvariable=value, width=18)
-            entry.grid(row=row, column=1, sticky="ew", pady=3)
-            self._bind_commit_entry(entry)
-
-        button_row = scale_row + len(SCALE_FIELD_DEFAULTS)
+        button_row = visibility_row + len(VISIBILITY_FIELD_DEFAULTS)
         self.reset_button = ttk.Button(panel, text="Reset Avg", command=self.reset_average)
         self.reset_button.grid(row=button_row, column=0, columnspan=2, sticky="ew", pady=3)
 
@@ -571,6 +538,12 @@ class InterferometryApp(tk.Tk):
                 "interferogram_y_min",
                 "interferogram_y_max",
             ),
+            "spectrum": (
+                self.ax_spectrum,
+                self.spectrum_autoscale,
+                "spectrum_y_min",
+                "spectrum_y_max",
+            ),
             "east_autocorr": (
                 self.ax_east_autocorr,
                 self.east_autocorr_autoscale,
@@ -693,6 +666,7 @@ class InterferometryApp(tk.Tk):
     def _latest_plot_values(self, name: str) -> np.ndarray | None:
         return {
             "interferogram": self._last_interferogram_mag,
+            "spectrum": self._last_spectrum_envelope,
             "east_autocorr": self._last_east_autocorr_mag,
             "west_autocorr": self._last_west_autocorr_mag,
             "east_auto_spectrum": self._last_east_auto_spectrum_mag,
@@ -791,6 +765,7 @@ class InterferometryApp(tk.Tk):
         self._last_interferogram_mag = interferogram_mag
         spectrum_mag = np.abs(result.cross_spectrum)
         spectrum_envelope = smooth_line(spectrum_mag, config.spectrum_smoothing_bins)
+        self._last_spectrum_envelope = spectrum_envelope
         phase = np.angle(result.cross_spectrum)
         peak_snr = estimate_peak_snr(interferogram_mag)
         peak_lag_bin = float(result.lag_bins[peak_snr.index])
@@ -847,7 +822,7 @@ class InterferometryApp(tk.Tk):
         self.phase_line.set_data(sky_freq_mhz, phase)
         self.ax_spectrum.set_xlim(float(sky_freq_mhz.min()), float(sky_freq_mhz.max()))
         if self.spectrum_autoscale.get() == "on":
-            self.ax_spectrum.set_ylim(0, max(float(spectrum_envelope.max()) * 1.15, 1e-6))
+            autoscale_positive_axis(self.ax_spectrum, spectrum_envelope)
         self.ax_phase.set_ylim(-np.pi, np.pi)
 
         east_autocorr_mag = np.abs(result.east_autocorrelation)
@@ -878,7 +853,6 @@ class InterferometryApp(tk.Tk):
             autoscale_positive_axis(self.ax_west_auto_spectrum, west_auto_spectrum_mag)
 
         self._apply_plot_visibility(draw=False)
-        self._apply_plot_scales(draw=False)
         self._apply_panel_plot_scales(draw=False)
         self._refresh_plot_buttons()
 
@@ -1172,7 +1146,6 @@ class InterferometryApp(tk.Tk):
         self._refresh_target_coordinate_fields(force=True)
         self._save_settings()
         self._apply_plot_visibility(draw=False)
-        self._apply_plot_scales(draw=False)
         self._apply_panel_plot_scales(draw=False)
         if hasattr(self, "_plot_buttons"):
             self._refresh_plot_buttons()
@@ -1184,13 +1157,11 @@ class InterferometryApp(tk.Tk):
         new_inputs = self._target_adjusted_inputs(new_inputs)
         new_continuum_inputs = {key: value.get() for key, value in self.continuum_inputs.items()}
         new_visibility_inputs = {key: value.get() for key, value in self.visibility_inputs.items()}
-        new_scale_inputs = {key: value.get() for key, value in self.scale_inputs.items()}
 
         try:
             self._read_config(new_inputs)
             validate_continuum_inputs(new_continuum_inputs)
             validate_visibility_inputs(new_visibility_inputs)
-            validate_scale_inputs(new_scale_inputs)
         except Exception as exc:
             self.status.set(f"Text fields not committed: {exc}")
             return "break"
@@ -1210,9 +1181,8 @@ class InterferometryApp(tk.Tk):
         self._committed_inputs = new_inputs
         self._committed_continuum_inputs = new_continuum_inputs
         self._committed_visibility_inputs = new_visibility_inputs
-        self._committed_scale_inputs = new_scale_inputs
         self._save_settings()
-        self._apply_plot_scales(draw=True)
+        self._apply_panel_plot_scales(draw=True)
 
         if self._running:
             self._apply_runtime_config_if_needed()
@@ -1257,22 +1227,6 @@ class InterferometryApp(tk.Tk):
         self.spectrum_line.set_visible(spectrum_enabled)
         self.phase_line.set_visible(phase_enabled)
         self.ax_phase.set_visible(phase_enabled)
-        if draw:
-            self.canvas.draw_idle()
-
-    def _apply_plot_scales(self, draw: bool = True) -> None:
-        try:
-            if self.spectrum_autoscale.get() == "off":
-                y_min = parse_scale_value(self._committed_scale_inputs["spectrum_y_min"])
-                y_max = parse_scale_value(self._committed_scale_inputs["spectrum_y_max"])
-                validate_scale_limits(y_min, y_max)
-                self.ax_spectrum.set_ylim(
-                    y_min,
-                    y_max,
-                )
-        except ValueError as exc:
-            self.status.set(f"Plot scale not applied: {exc}")
-            return
         if draw:
             self.canvas.draw_idle()
 
@@ -1368,7 +1322,6 @@ class InterferometryApp(tk.Tk):
         settings.update(self._committed_inputs)
         settings.update(self._committed_continuum_inputs)
         settings.update(self._committed_visibility_inputs)
-        settings.update(self._committed_scale_inputs)
         settings.update(self._plot_scale_inputs)
         try:
             SETTINGS_PATH.write_text(json.dumps(settings, indent=2), encoding="utf-8")
@@ -1442,6 +1395,7 @@ def autoscale_button_color(variable: tk.StringVar) -> str:
 def plot_control_label(name: str) -> str:
     labels = {
         "interferogram": "Interferogram",
+        "spectrum": "Cross-corr spectrum",
         "east_autocorr": "East autocorr",
         "west_autocorr": "West autocorr",
         "east_auto_spectrum": "East spectrum",
@@ -1504,13 +1458,6 @@ def validate_visibility_inputs(values: dict[str, str]) -> None:
     interval_s = parse_float_text(values["visibility_record_interval_s"], "Visibility record interval")
     if interval_s < 0:
         raise ValueError("Visibility record interval must be 0 or greater.")
-
-
-def validate_scale_inputs(values: dict[str, str]) -> None:
-    validate_scale_limits(
-        parse_scale_value(values["spectrum_y_min"]),
-        parse_scale_value(values["spectrum_y_max"]),
-    )
 
 
 def validate_scale_limits(y_min: float, y_max: float) -> None:
