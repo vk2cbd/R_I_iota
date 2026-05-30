@@ -12,6 +12,7 @@ from time import sleep
 import numpy as np
 
 SPEED_OF_LIGHT_M_S = 299_792_458.0
+MOON_SEMIMAJOR_EARTH_RADII = 60.2666
 
 
 @dataclass(frozen=True)
@@ -457,8 +458,13 @@ def activate_b210_stream_with_timed_start(sdr, rx_stream, has_time_flag: int) ->
     )
 
 
-def target_coordinates(target_name: str, when: datetime | None = None) -> TargetCoordinates:
-    """Return approximate geocentric RA/DEC for supported bright calibrators."""
+def target_coordinates(
+    target_name: str,
+    when: datetime | None = None,
+    observer_lat_deg: float | None = None,
+    observer_lon_deg: float | None = None,
+) -> TargetCoordinates:
+    """Return approximate RA/DEC for supported bright calibrators."""
 
     if when is None:
         when = datetime.now(timezone.utc)
@@ -466,6 +472,8 @@ def target_coordinates(target_name: str, when: datetime | None = None) -> Target
     if target_name == "sun":
         return sun_coordinates(when)
     if target_name == "moon":
+        if observer_lat_deg is not None and observer_lon_deg is not None:
+            return topocentric_moon_coordinates(when, observer_lat_deg, observer_lon_deg)
         return moon_coordinates(when)
     raise ValueError(f"Unsupported target source: {target_name}")
 
@@ -487,11 +495,40 @@ def sun_coordinates(when: datetime) -> TargetCoordinates:
 def moon_coordinates(when: datetime) -> TargetCoordinates:
     """Return low-precision geocentric Moon RA/DEC in decimal degrees."""
 
+    x_eq, y_eq, z_eq = moon_equatorial_vector_earth_radii(when)
+    ra_deg, dec_deg = equatorial_vector_to_ra_dec_degrees(x_eq, y_eq, z_eq)
+    return TargetCoordinates("Moon", ra_deg, dec_deg)
+
+
+def topocentric_moon_coordinates(
+    when: datetime,
+    observer_lat_deg: float,
+    observer_lon_deg: float,
+) -> TargetCoordinates:
+    """Return low-precision topocentric Moon RA/DEC for an observer site."""
+
+    moon_x, moon_y, moon_z = moon_equatorial_vector_earth_radii(when)
+    sidereal = radians(local_sidereal_time_degrees(when, observer_lon_deg))
+    lat = radians(observer_lat_deg)
+    observer_x = cos(lat) * cos(sidereal)
+    observer_y = cos(lat) * sin(sidereal)
+    observer_z = sin(lat)
+    ra_deg, dec_deg = equatorial_vector_to_ra_dec_degrees(
+        moon_x - observer_x,
+        moon_y - observer_y,
+        moon_z - observer_z,
+    )
+    return TargetCoordinates("Moon", ra_deg, dec_deg)
+
+
+def moon_equatorial_vector_earth_radii(when: datetime) -> tuple[float, float, float]:
+    """Return approximate geocentric Moon vector in equatorial Earth radii."""
+
     jd = julian_date(when)
     d = jd - 2451543.5
-    ascending_node = radians(normalize_degrees(125.1228 - 0.0529538083 * d))
-    inclination = radians(5.1454)
-    arg_perigee = radians(normalize_degrees(318.0634 + 0.1643573223 * d))
+    ascending_node_deg = normalize_degrees(125.1228 - 0.0529538083 * d)
+    inclination_deg = 5.1454
+    arg_perigee_deg = normalize_degrees(318.0634 + 0.1643573223 * d)
     eccentricity = 0.054900
     mean_anomaly_deg = normalize_degrees(115.3654 + 13.0649929509 * d)
     mean_anomaly = radians(mean_anomaly_deg)
@@ -500,12 +537,18 @@ def moon_coordinates(when: datetime) -> TargetCoordinates:
         eccentricity * sin(mean_anomaly) * (1.0 + eccentricity * cos(mean_anomaly))
     )
     eccentric_anomaly = radians(eccentric_anomaly_deg)
-    xv = cos(eccentric_anomaly) - eccentricity
-    yv = sqrt(1.0 - eccentricity * eccentricity) * sin(eccentric_anomaly)
+    xv = MOON_SEMIMAJOR_EARTH_RADII * (cos(eccentric_anomaly) - eccentricity)
+    yv = (
+        MOON_SEMIMAJOR_EARTH_RADII
+        * sqrt(1.0 - eccentricity * eccentricity)
+        * sin(eccentric_anomaly)
+    )
     true_anomaly = atan2(yv, xv)
     radius = sqrt(xv * xv + yv * yv)
 
-    longitude_arg = true_anomaly + arg_perigee
+    ascending_node = radians(ascending_node_deg)
+    inclination = radians(inclination_deg)
+    longitude_arg = true_anomaly + radians(arg_perigee_deg)
     xh = radius * (
         cos(ascending_node) * cos(longitude_arg)
         - sin(ascending_node) * sin(longitude_arg) * cos(inclination)
@@ -516,13 +559,80 @@ def moon_coordinates(when: datetime) -> TargetCoordinates:
     )
     zh = radius * sin(longitude_arg) * sin(inclination)
 
+    ecliptic_lon_deg = normalize_degrees(degrees(atan2(yh, xh)))
+    ecliptic_lat_deg = degrees(atan2(zh, sqrt(xh * xh + yh * yh)))
+    ecliptic_lon_deg, ecliptic_lat_deg, radius = apply_lunar_perturbations(
+        ecliptic_lon_deg,
+        ecliptic_lat_deg,
+        radius,
+        ascending_node_deg,
+        arg_perigee_deg,
+        mean_anomaly_deg,
+        d,
+    )
+    lon = radians(ecliptic_lon_deg)
+    lat = radians(ecliptic_lat_deg)
+    x_ecl = radius * cos(lon) * cos(lat)
+    y_ecl = radius * sin(lon) * cos(lat)
+    z_ecl = radius * sin(lat)
+
     obliquity = radians(mean_obliquity_degrees(jd))
-    xe = xh
-    ye = yh * cos(obliquity) - zh * sin(obliquity)
-    ze = yh * sin(obliquity) + zh * cos(obliquity)
-    ra_deg = normalize_degrees(degrees(atan2(ye, xe)))
-    dec_deg = degrees(atan2(ze, sqrt(xe * xe + ye * ye)))
-    return TargetCoordinates("Moon", ra_deg, dec_deg)
+    x_eq = x_ecl
+    y_eq = y_ecl * cos(obliquity) - z_ecl * sin(obliquity)
+    z_eq = y_ecl * sin(obliquity) + z_ecl * cos(obliquity)
+    return x_eq, y_eq, z_eq
+
+
+def apply_lunar_perturbations(
+    longitude_deg: float,
+    latitude_deg: float,
+    distance_earth_radii: float,
+    ascending_node_deg: float,
+    arg_perigee_deg: float,
+    moon_mean_anomaly_deg: float,
+    days_since_epoch: float,
+) -> tuple[float, float, float]:
+    """Apply the largest lunar perturbation terms to lon/lat/range."""
+
+    sun_mean_anomaly_deg = normalize_degrees(356.0470 + 0.9856002585 * days_since_epoch)
+    sun_perigee_deg = normalize_degrees(282.9404 + 0.0000470935 * days_since_epoch)
+    sun_mean_longitude_deg = normalize_degrees(sun_mean_anomaly_deg + sun_perigee_deg)
+    moon_mean_longitude_deg = normalize_degrees(
+        ascending_node_deg + arg_perigee_deg + moon_mean_anomaly_deg
+    )
+    elongation_deg = moon_mean_longitude_deg - sun_mean_longitude_deg
+    argument_latitude_deg = moon_mean_longitude_deg - ascending_node_deg
+
+    mm = moon_mean_anomaly_deg
+    ms = sun_mean_anomaly_deg
+    d = elongation_deg
+    f = argument_latitude_deg
+    longitude_deg += (
+        -1.274 * sin(radians(mm - 2.0 * d))
+        + 0.658 * sin(radians(2.0 * d))
+        - 0.186 * sin(radians(ms))
+        - 0.059 * sin(radians(2.0 * mm - 2.0 * d))
+        - 0.057 * sin(radians(mm - 2.0 * d + ms))
+        + 0.053 * sin(radians(mm + 2.0 * d))
+        + 0.046 * sin(radians(2.0 * d - ms))
+        + 0.041 * sin(radians(mm - ms))
+        - 0.035 * sin(radians(d))
+        - 0.031 * sin(radians(mm + ms))
+        - 0.015 * sin(radians(2.0 * f - 2.0 * d))
+        + 0.011 * sin(radians(mm - 4.0 * d))
+    )
+    latitude_deg += (
+        -0.173 * sin(radians(f - 2.0 * d))
+        - 0.055 * sin(radians(mm - f - 2.0 * d))
+        - 0.046 * sin(radians(mm + f - 2.0 * d))
+        + 0.033 * sin(radians(f + 2.0 * d))
+        + 0.017 * sin(radians(2.0 * mm + f))
+    )
+    distance_earth_radii += (
+        -0.58 * cos(radians(mm - 2.0 * d))
+        - 0.46 * cos(radians(2.0 * d))
+    )
+    return normalize_degrees(longitude_deg), latitude_deg, distance_earth_radii
 
 
 def geometric_delay_seconds(config: ObservationConfig, when: datetime | None = None) -> float:
@@ -662,6 +772,10 @@ def ecliptic_to_equatorial_degrees(
     y = sin(lon) * cos(lat) * cos(obliquity) - sin(lat) * sin(obliquity)
     z = sin(lon) * cos(lat) * sin(obliquity) + sin(lat) * cos(obliquity)
     return normalize_degrees(degrees(atan2(y, x))), degrees(asin(np.clip(z, -1.0, 1.0)))
+
+
+def equatorial_vector_to_ra_dec_degrees(x: float, y: float, z: float) -> tuple[float, float]:
+    return normalize_degrees(degrees(atan2(y, x))), degrees(atan2(z, sqrt(x * x + y * y)))
 
 
 def normalize_degrees(value: float) -> float:

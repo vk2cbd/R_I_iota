@@ -71,19 +71,33 @@ def test_fringe_model_rejects_non_positive_rate_step() -> None:
 
 
 def test_sun_target_coordinates_are_plausible() -> None:
-    coords = target_coordinates("Sun", datetime(2026, 5, 31, 0, 0, tzinfo=timezone.utc))
+    coords = target_coordinates(
+        "Sun",
+        datetime(2026, 5, 31, 0, 0, tzinfo=timezone.utc),
+        observer_lat_deg=-33.8688,
+        observer_lon_deg=151.2093,
+    )
 
     assert coords.name == "Sun"
-    assert 60.0 <= coords.ra_deg <= 80.0
-    assert 20.0 <= coords.dec_deg <= 25.0
+    assert coords.ra_deg == pytest.approx(67.915, abs=0.02)
+    assert coords.dec_deg == pytest.approx(21.888, abs=0.02)
 
 
-def test_moon_target_coordinates_are_in_expected_ranges() -> None:
-    coords = target_coordinates("Moon", datetime(2026, 5, 31, 0, 0, tzinfo=timezone.utc))
+def test_moon_target_coordinates_are_topocentric_when_observer_is_supplied() -> None:
+    when = datetime(2026, 5, 31, 0, 0, tzinfo=timezone.utc)
+
+    coords = target_coordinates(
+        "Moon",
+        when,
+        observer_lat_deg=-33.8688,
+        observer_lon_deg=151.2093,
+    )
+    geocentric_coords = target_coordinates("Moon", when)
 
     assert coords.name == "Moon"
-    assert 0.0 <= coords.ra_deg < 360.0
-    assert -90.0 <= coords.dec_deg <= 90.0
+    assert coords.ra_deg == pytest.approx(242.380, abs=0.05)
+    assert coords.dec_deg == pytest.approx(-25.396, abs=0.05)
+    assert abs(coords.dec_deg - geocentric_coords.dec_deg) > 0.5
 
 
 def test_unknown_target_coordinates_are_rejected() -> None:

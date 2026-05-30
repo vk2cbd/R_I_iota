@@ -1,5 +1,13 @@
 # Version History
 
+## 0.4.3-theta - Topocentric Moon Coordinates
+
+- Verified Sun/Moon RA/DEC against NASA/JPL Horizons reference values.
+- Changed Moon target coordinates from geocentric to observer-topocentric
+  RA/DEC when observer latitude/longitude are available.
+- Improved the built-in lunar approximation with the largest perturbation
+  terms so the GUI readout is close to Horizons for calibration use.
+
 ## 0.4.2-theta - Spectrum Panel Scaling
 
 - Moved Cross-Correlation Spectrum manual Y-axis scaling out of the left GUI

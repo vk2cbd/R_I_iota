@@ -1018,7 +1018,14 @@ class InterferometryApp(tk.Tk):
         adjusted = dict(raw_inputs)
         target_mode = self._target_mode_value()
         if target_mode != MANUAL_TARGET_SOURCE:
-            coords = target_coordinates(target_mode, when)
+            observer_lat_deg = parse_float_text(adjusted["observer_lat_deg"], "Observer latitude")
+            observer_lon_deg = parse_float_text(adjusted["observer_lon_deg"], "Observer longitude")
+            coords = target_coordinates(
+                target_mode,
+                when,
+                observer_lat_deg=observer_lat_deg,
+                observer_lon_deg=observer_lon_deg,
+            )
             adjusted["ra_deg"] = f"{coords.ra_deg:.4f}"
             adjusted["dec_deg"] = f"{coords.dec_deg:.4f}"
         return adjusted
