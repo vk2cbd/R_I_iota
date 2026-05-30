@@ -1,5 +1,14 @@
 # Version History
 
+## 0.4.0-theta - Display Fringe Model
+
+- Branched from stable Eta for the start of Theta development.
+- Added a geometric fringe model readout showing predicted delay, phase, and
+  phase rate for the configured source, baseline, location, and sky frequency.
+- Added a display-only stopped phase trace as a live sanity check without
+  changing the backend correlation or averaging path.
+- Stored Theta settings separately from Eta settings.
+
 ## 0.3.16-eta - Fringe Control Alignment
 
 - Moved the Fringe I/Q control stack left so its boxes align with the plot

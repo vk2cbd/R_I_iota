@@ -1,10 +1,12 @@
 from datetime import datetime, timezone
 
 import numpy as np
+import pytest
 
 from radio_interferometer.sources import (
     ObservationConfig,
     SimulatedInterferometerSource,
+    fringe_model,
     geometric_delay_seconds,
     horizontal_coordinates,
     parse_device_args,
@@ -45,6 +47,26 @@ def test_geometric_delay_is_finite() -> None:
 
     assert np.isfinite(delay)
     assert abs(delay) < 1e-6
+
+
+def test_fringe_model_matches_geometric_delay_phase() -> None:
+    config = make_config()
+    when = datetime(2026, 5, 16, 12, 0, tzinfo=timezone.utc)
+
+    model = fringe_model(config, when)
+
+    expected_delay = geometric_delay_seconds(config, when)
+    assert model.when_utc == when
+    assert model.delay_s == pytest.approx(expected_delay)
+    assert model.phase_rad == pytest.approx(
+        2.0 * np.pi * config.observing_frequency_hz * expected_delay
+    )
+    assert np.isfinite(model.phase_rate_rad_s)
+
+
+def test_fringe_model_rejects_non_positive_rate_step() -> None:
+    with pytest.raises(ValueError):
+        fringe_model(make_config(), rate_step_s=0.0)
 
 
 def test_horizontal_coordinates_are_in_expected_ranges() -> None:

@@ -23,11 +23,11 @@ from .correlator import (
     estimate_broadband_continuum_snr,
     estimate_peak_snr,
 )
-from .sources import ObservationConfig
+from .sources import ObservationConfig, fringe_model
 
 GUI_REFRESH_MS = 80
 AVERAGING_DRAW_REFRESH_MS = 500
-SETTINGS_PATH = Path.home() / ".radio_interferometer_eta_settings.json"
+SETTINGS_PATH = Path.home() / ".radio_interferometer_theta_settings.json"
 PLOT_CONTROL_WIDTH = 0.055
 PLOT_CONTROL_HEIGHT = 0.026
 PLOT_CONTROL_GAP = 0.006
@@ -146,8 +146,8 @@ class InterferometryApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title(f"Radio Interferometry FX Correlator v{__version__}")
-        self.geometry("1320x940")
-        self.minsize(1080, 780)
+        self.geometry("1320x1040")
+        self.minsize(1080, 840)
 
         self._backend: CorrelatorBackendProcess | None = None
         self._running = False
@@ -183,6 +183,8 @@ class InterferometryApp(tk.Tk):
         self._fringe_time_history: deque[float] = deque()
         self._fringe_i_history: deque[float] = deque()
         self._fringe_q_history: deque[float] = deque()
+        self._fringe_raw_phase_history: deque[float] = deque()
+        self._fringe_stopped_phase_history: deque[float] = deque()
         self._fringe_time_window_minutes = parse_fringe_window_minutes(
             self._settings["fringe_time_window_minutes"]
         )
@@ -388,6 +390,10 @@ class InterferometryApp(tk.Tk):
         ttk.Label(panel, textvariable=self.visibility_status, wraplength=240).grid(
             row=button_row + 3, column=0, columnspan=2, sticky="w", pady=(8, 0)
         )
+        self.fringe_model_status = tk.StringVar(value="Fringe model: --")
+        ttk.Label(panel, textvariable=self.fringe_model_status, wraplength=240).grid(
+            row=button_row + 4, column=0, columnspan=2, sticky="w", pady=(8, 0)
+        )
         panel.columnconfigure(1, weight=1)
 
         self._watch_control(self.source_mode)
@@ -411,8 +417,12 @@ class InterferometryApp(tk.Tk):
         plot_frame = ttk.Frame(self, padding=(0, 10, 10, 10))
         plot_frame.pack(side=tk.RIGHT, expand=True, fill=tk.BOTH)
 
-        self.figure = Figure(figsize=(11, 11), dpi=100)
-        grid = self.figure.add_gridspec(5, 2, height_ratios=[1.0, 1.0, 1.0, 0.85, 0.12])
+        self.figure = Figure(figsize=(11, 12), dpi=100)
+        grid = self.figure.add_gridspec(
+            6,
+            2,
+            height_ratios=[1.0, 1.0, 1.0, 0.75, 0.75, 0.12],
+        )
         self.ax_interferogram = self.figure.add_subplot(grid[0, 0])
         self.ax_spectrum = self.figure.add_subplot(grid[0, 1])
         self.ax_east_autocorr = self.figure.add_subplot(grid[1, 0])
@@ -420,7 +430,8 @@ class InterferometryApp(tk.Tk):
         self.ax_east_auto_spectrum = self.figure.add_subplot(grid[2, 0])
         self.ax_west_auto_spectrum = self.figure.add_subplot(grid[2, 1])
         self.ax_fringe_time = self.figure.add_subplot(grid[3, :])
-        self.ax_fringe_time_slider = self.figure.add_subplot(grid[4, :])
+        self.ax_fringe_phase = self.figure.add_subplot(grid[4, :])
+        self.ax_fringe_time_slider = self.figure.add_subplot(grid[5, :])
         self.ax_phase = self.ax_spectrum.twinx()
 
         self.ax_interferogram.set_title("Realtime Interferogram")
@@ -447,6 +458,11 @@ class InterferometryApp(tk.Tk):
         self.ax_fringe_time.set_ylabel("Broadband visibility")
         self.ax_fringe_time.set_xlim(0.0, self._fringe_window_seconds())
         self.ax_fringe_time.set_ylim(-1.0, 1.0)
+        self.ax_fringe_phase.set_title("Raw and Display-Stopped Fringe Phase")
+        self.ax_fringe_phase.set_xlabel("Time since start (s)")
+        self.ax_fringe_phase.set_ylabel("Phase (deg)")
+        self.ax_fringe_phase.set_xlim(0.0, self._fringe_window_seconds())
+        self.ax_fringe_phase.set_ylim(-180.0, 180.0)
         self._apply_graticules()
 
         (self.interferogram_line,) = self.ax_interferogram.plot([], [], color="#1f77b4", lw=1.4)
@@ -468,6 +484,13 @@ class InterferometryApp(tk.Tk):
         )
         (self.fringe_i_line,) = self.ax_fringe_time.plot([], [], color="#1f77b4", lw=1.1)
         (self.fringe_q_line,) = self.ax_fringe_time.plot([], [], color="#d62728", lw=1.1)
+        (self.fringe_raw_phase_line,) = self.ax_fringe_phase.plot(
+            [], [], color="#9467bd", lw=1.1, label="Raw phase"
+        )
+        (self.fringe_stopped_phase_line,) = self.ax_fringe_phase.plot(
+            [], [], color="#2ca02c", lw=1.1, label="Stopped phase"
+        )
+        self.ax_fringe_phase.legend(loc="upper right", framealpha=0.8)
         self.fringe_time_slider = Slider(
             self.ax_fringe_time_slider,
             "Time span (min)",
@@ -512,6 +535,7 @@ class InterferometryApp(tk.Tk):
             self.ax_east_auto_spectrum,
             self.ax_west_auto_spectrum,
             self.ax_fringe_time,
+            self.ax_fringe_phase,
         )
         for axis in axes:
             axis.set_axisbelow(True)
@@ -752,6 +776,7 @@ class InterferometryApp(tk.Tk):
         phase = np.angle(result.cross_spectrum)
         peak_snr = estimate_peak_snr(interferogram_mag)
         peak_lag_bin = float(result.lag_bins[peak_snr.index])
+        model = fringe_model(config)
         continuum, continuum_error = self._estimate_broadband_visibility(
             result,
             config,
@@ -770,6 +795,7 @@ class InterferometryApp(tk.Tk):
                 continuum_text = f"Continuum SNR: {continuum_error}"
 
         if continuum is not None:
+            stopped_visibility = continuum.visibility * np.exp(-1j * model.phase_rad)
             self.visibility_status.set(
                 "Visibility: "
                 f"Re {continuum.visibility.real:.4g}, "
@@ -778,10 +804,12 @@ class InterferometryApp(tk.Tk):
                 f"Phase {continuum.phase_rad:.4f} rad, "
                 f"SNR {continuum.snr:.2f}"
             )
-            self._append_fringe_sample(continuum.visibility)
+            self._set_fringe_model_status(model, continuum.visibility, stopped_visibility)
+            self._append_fringe_sample(continuum.visibility, stopped_visibility)
             self._record_visibility_if_needed(config, continuum, peak_lag_bin)
         else:
             self.visibility_status.set("Visibility: --")
+            self._set_fringe_model_status(model, None, None)
         self._draw_fringe_history()
 
         self.interferogram_line.set_data(result.lag_bins, interferogram_mag)
@@ -863,10 +891,12 @@ class InterferometryApp(tk.Tk):
         self._fringe_time_history.clear()
         self._fringe_i_history.clear()
         self._fringe_q_history.clear()
+        self._fringe_raw_phase_history.clear()
+        self._fringe_stopped_phase_history.clear()
         if hasattr(self, "fringe_i_line"):
             self._draw_fringe_history(draw=True)
 
-    def _append_fringe_sample(self, visibility: complex) -> None:
+    def _append_fringe_sample(self, visibility: complex, stopped_visibility: complex) -> None:
         now = monotonic()
         if self._fringe_history_start is None:
             self._fringe_history_start = now
@@ -874,12 +904,16 @@ class InterferometryApp(tk.Tk):
         self._fringe_time_history.append(elapsed)
         self._fringe_i_history.append(float(np.real(visibility)))
         self._fringe_q_history.append(float(np.imag(visibility)))
+        self._fringe_raw_phase_history.append(float(np.angle(visibility)))
+        self._fringe_stopped_phase_history.append(float(np.angle(stopped_visibility)))
 
         oldest_time = elapsed - FRINGE_HISTORY_MAX_SECONDS
         while self._fringe_time_history and self._fringe_time_history[0] < oldest_time:
             self._fringe_time_history.popleft()
             self._fringe_i_history.popleft()
             self._fringe_q_history.popleft()
+            self._fringe_raw_phase_history.popleft()
+            self._fringe_stopped_phase_history.popleft()
 
     def _on_fringe_window_changed(self, value: float) -> None:
         self._fringe_time_window_minutes = clamp_fringe_window_minutes(float(value))
@@ -894,7 +928,11 @@ class InterferometryApp(tk.Tk):
         if not self._fringe_time_history:
             self.fringe_i_line.set_data([], [])
             self.fringe_q_line.set_data([], [])
+            self.fringe_raw_phase_line.set_data([], [])
+            self.fringe_stopped_phase_line.set_data([], [])
             self.ax_fringe_time.set_xlim(0.0, window_seconds)
+            self.ax_fringe_phase.set_xlim(0.0, window_seconds)
+            self.ax_fringe_phase.set_ylim(-180.0, 180.0)
             if self.fringe_iq_autoscale.get() == "on":
                 self.ax_fringe_time.set_ylim(-1.0, 1.0)
             else:
@@ -906,6 +944,11 @@ class InterferometryApp(tk.Tk):
         times = np.asarray(self._fringe_time_history, dtype=np.float64)
         i_values = np.asarray(self._fringe_i_history, dtype=np.float64)
         q_values = np.asarray(self._fringe_q_history, dtype=np.float64)
+        raw_phase_values = np.asarray(self._fringe_raw_phase_history, dtype=np.float64)
+        stopped_phase_values = np.asarray(
+            self._fringe_stopped_phase_history,
+            dtype=np.float64,
+        )
 
         x_max = max(window_seconds, float(times[-1]))
         x_min = max(0.0, x_max - window_seconds)
@@ -913,21 +956,59 @@ class InterferometryApp(tk.Tk):
         display_times = times[visible]
         display_i = i_values[visible]
         display_q = q_values[visible]
+        display_raw_phase = np.degrees(np.unwrap(raw_phase_values[visible]))
+        display_stopped_phase = np.degrees(np.unwrap(stopped_phase_values[visible]))
         if display_times.size > FRINGE_DISPLAY_MAX_POINTS:
             step = int(np.ceil(display_times.size / FRINGE_DISPLAY_MAX_POINTS))
             display_times = display_times[::step]
             display_i = display_i[::step]
             display_q = display_q[::step]
+            display_raw_phase = display_raw_phase[::step]
+            display_stopped_phase = display_stopped_phase[::step]
         self.fringe_i_line.set_data(display_times, display_i)
         self.fringe_q_line.set_data(display_times, display_q)
+        self.fringe_raw_phase_line.set_data(display_times, display_raw_phase)
+        self.fringe_stopped_phase_line.set_data(display_times, display_stopped_phase)
         self.ax_fringe_time.set_xlim(x_min, x_max)
+        self.ax_fringe_phase.set_xlim(x_min, x_max)
 
         if self.fringe_iq_autoscale.get() == "on":
             autoscale_symmetric_axis(self.ax_fringe_time, np.concatenate((display_i, display_q)))
         else:
             self._apply_panel_plot_scales(draw=False)
+        phase_values = np.concatenate((display_raw_phase, display_stopped_phase))
+        autoscale_phase_axis(self.ax_fringe_phase, phase_values)
         if draw:
             self.canvas.draw_idle()
+
+    def _set_fringe_model_status(
+        self,
+        model,
+        raw_visibility: complex | None,
+        stopped_visibility: complex | None,
+    ) -> None:
+        delay_ns = model.delay_s * 1_000_000_000.0
+        model_phase_deg = wrap_degrees(np.degrees(model.phase_rad))
+        rate_hz = model.phase_rate_rad_s / (2.0 * np.pi)
+        rate_deg_s = np.degrees(model.phase_rate_rad_s)
+        lines = [
+            f"Fringe model {model.when_utc.strftime('%H:%M:%S')} UTC",
+            f"Delay {delay_ns:+.2f} ns",
+            f"Phase {model_phase_deg:+.1f} deg",
+            f"Rate {rate_hz:+.4f} Hz ({rate_deg_s:+.1f} deg/s)",
+        ]
+        if raw_visibility is not None and stopped_visibility is not None:
+            raw_phase_deg = wrap_degrees(np.degrees(np.angle(raw_visibility)))
+            stopped_phase_deg = wrap_degrees(np.degrees(np.angle(stopped_visibility)))
+            lines.extend(
+                [
+                    f"Raw vis phase {raw_phase_deg:+.1f} deg",
+                    f"Stopped phase {stopped_phase_deg:+.1f} deg",
+                ]
+            )
+        else:
+            lines.append("Stopped phase --")
+        self.fringe_model_status.set("\n".join(lines))
 
     def _read_config(self, raw_inputs: dict[str, str] | None = None) -> ObservationConfig:
         raw_inputs = self._committed_inputs if raw_inputs is None else raw_inputs
@@ -1247,6 +1328,17 @@ def autoscale_symmetric_axis(axis, values: np.ndarray) -> None:
     axis.set_ylim(-maximum * 1.15, maximum * 1.15)
 
 
+def autoscale_phase_axis(axis, values: np.ndarray) -> None:
+    if values.size == 0:
+        axis.set_ylim(-180.0, 180.0)
+        return
+    maximum = float(np.nanmax(np.abs(values)))
+    if not np.isfinite(maximum) or maximum <= 0.0:
+        maximum = 180.0
+    maximum = max(180.0, maximum)
+    axis.set_ylim(-maximum * 1.10, maximum * 1.10)
+
+
 def autoscale_plot_axis(axis, values: np.ndarray, symmetric: bool = False) -> None:
     if symmetric:
         autoscale_symmetric_axis(axis, values)
@@ -1295,6 +1387,10 @@ def parse_float_text(value: str, label: str) -> float:
 
 def format_no_decimal(value: float) -> str:
     return f"{value:.0f}"
+
+
+def wrap_degrees(value: float) -> float:
+    return ((value + 180.0) % 360.0) - 180.0
 
 
 def clamp_fringe_window_minutes(value: float) -> float:

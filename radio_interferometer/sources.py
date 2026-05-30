@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from math import asin, atan2, cos, degrees, radians, sin
+from datetime import datetime, timedelta, timezone
+from math import asin, atan2, cos, degrees, pi, radians, sin
 from threading import Event, Lock, Thread
 from time import sleep
 
@@ -47,6 +47,16 @@ class ObservationConfig:
     @property
     def intermediate_frequency_hz(self) -> float:
         return self.intermediate_frequency_mhz * 1_000_000.0
+
+
+@dataclass(frozen=True)
+class FringeModel:
+    """Predicted geometric fringe terms for the configured source and baseline."""
+
+    when_utc: datetime
+    delay_s: float
+    phase_rad: float
+    phase_rate_rad_s: float
 
 
 class SampleSource:
@@ -463,6 +473,39 @@ def geometric_delay_seconds(config: ObservationConfig, when: datetime | None = N
         + config.baseline_up_m * up
     )
     return projected_m / SPEED_OF_LIGHT_M_S
+
+
+def fringe_model(
+    config: ObservationConfig,
+    when: datetime | None = None,
+    rate_step_s: float = 1.0,
+) -> FringeModel:
+    """Return the current model delay, phase, and fringe rate for display."""
+
+    if when is None:
+        when = datetime.now(timezone.utc)
+    if rate_step_s <= 0:
+        raise ValueError("Fringe model rate step must be positive.")
+
+    delay_s = geometric_delay_seconds(config, when)
+    future_delay_s = geometric_delay_seconds(
+        config,
+        when + timedelta(seconds=rate_step_s),
+    )
+    phase_rad = 2.0 * pi * config.observing_frequency_hz * delay_s
+    phase_rate_rad_s = (
+        2.0
+        * pi
+        * config.observing_frequency_hz
+        * (future_delay_s - delay_s)
+        / rate_step_s
+    )
+    return FringeModel(
+        when_utc=when,
+        delay_s=delay_s,
+        phase_rad=phase_rad,
+        phase_rate_rad_s=phase_rate_rad_s,
+    )
 
 
 def horizontal_coordinates(

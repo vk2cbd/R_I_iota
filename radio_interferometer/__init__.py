@@ -1,3 +1,3 @@
 """Radio interferometry FX correlator application."""
 
-__version__ = "0.3.16-eta"
+__version__ = "0.4.0-theta"
