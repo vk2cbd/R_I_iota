@@ -1,5 +1,14 @@
 # Version History
 
+## 0.4.8-theta - Wrapped Stable Readouts
+
+- Restored natural sizing for the always-visible readout panel so it no
+  longer reserves a large blank block below the status text.
+- Reworked runtime backend status into short fixed lines so B210 queue and
+  FFT status remain readable in the left pane.
+- Kept stable line counts for status, visibility, and fringe-model readouts
+  so the controls do not jump as fields update.
+
 ## 0.4.7-theta - Stable Readout Panel
 
 - Fixed the bottom-left status/readout panel height so the scrollable GUI

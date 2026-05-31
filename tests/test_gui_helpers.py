@@ -6,6 +6,8 @@ import pytest
 from radio_interferometer.gui import (
     format_ra_hours,
     format_fringe_model_status,
+    format_runtime_status_text,
+    format_status_text,
     format_visibility_status,
     fringe_reset_signature,
     parse_ra_hours_text,
@@ -28,8 +30,26 @@ def test_parse_ra_hours_rejects_degree_like_value() -> None:
 
 
 def test_readout_formatters_keep_stable_line_counts() -> None:
+    assert len(format_status_text("Ready").splitlines()) == 4
+    assert len(format_runtime_status_text("Averaging stable.", {}).splitlines()) == 4
     assert len(format_visibility_status(None).splitlines()) == 4
     assert len(format_fringe_model_status(None, None, None).splitlines()) == 6
+
+    b210_status = {
+        "queued": 2,
+        "chunks": 123,
+        "dropped": 0,
+        "reads": 4567,
+        "processed": 4560,
+        "active_bins": 2048,
+        "active_averaging_blocks": 8196,
+        "dropped_results": 0,
+        "overflows": 0,
+        "timeouts": 0,
+    }
+    runtime_lines = format_runtime_status_text("Averaging stable.", b210_status).splitlines()
+    assert len(runtime_lines) == 4
+    assert runtime_lines[1].startswith("B210 q 2")
 
     continuum = SimpleNamespace(
         visibility=1.0 + 2.0j,

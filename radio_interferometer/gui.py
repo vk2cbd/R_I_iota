@@ -36,8 +36,8 @@ PLOT_CONTROL_GAP = 0.006
 PLOT_CONTROL_FONT_SIZE = 8
 GRID_MAJOR_COLOR = "#d0d0d0"
 GRID_MINOR_COLOR = "#e8e8e8"
-STATUS_PANEL_HEIGHT = 360
-STATUS_LABEL_WIDTH = 34
+STATUS_LINE_COUNT = 4
+STATUS_WRAP_LENGTH = 300
 FRINGE_WINDOW_MINUTES_MIN = 10.0
 FRINGE_WINDOW_MINUTES_MAX = 180.0
 FRINGE_WINDOW_MINUTES_DEFAULT = 10.0
@@ -206,9 +206,6 @@ class InterferometryApp(tk.Tk):
         ttk.Separator(controls).grid(row=1, column=0, sticky="ew")
         fixed_status = ttk.Frame(controls, padding=(10, 8))
         fixed_status.grid(row=2, column=0, sticky="ew")
-        fixed_status.configure(height=STATUS_PANEL_HEIGHT)
-        fixed_status.grid_propagate(False)
-        fixed_status.pack_propagate(False)
 
         controls_canvas = tk.Canvas(scroll_area, width=320, highlightthickness=0)
         controls_scroll = ttk.Scrollbar(
@@ -378,34 +375,31 @@ class InterferometryApp(tk.Tk):
         self.reset_button = ttk.Button(panel, text="Reset Avg", command=self.reset_average)
         self.reset_button.grid(row=button_row, column=0, columnspan=2, sticky="ew", pady=3)
 
-        self.status = tk.StringVar(value="Ready")
-        tk.Label(
+        self.status = tk.StringVar(value=format_status_text("Ready"))
+        ttk.Label(
             fixed_status,
             textvariable=self.status,
             anchor="nw",
             justify=tk.LEFT,
-            width=STATUS_LABEL_WIDTH,
-            height=6,
+            wraplength=STATUS_WRAP_LENGTH,
         ).pack(anchor="w", fill=tk.X)
         self.visibility_status = tk.StringVar(value=format_visibility_status(None))
-        tk.Label(
+        ttk.Label(
             fixed_status,
             textvariable=self.visibility_status,
             anchor="nw",
             justify=tk.LEFT,
-            width=STATUS_LABEL_WIDTH,
-            height=4,
+            wraplength=STATUS_WRAP_LENGTH,
         ).pack(anchor="w", fill=tk.X, pady=(4, 0))
         self.fringe_model_status = tk.StringVar(
             value=format_fringe_model_status(None, None, None)
         )
-        tk.Label(
+        ttk.Label(
             fixed_status,
             textvariable=self.fringe_model_status,
             anchor="nw",
             justify=tk.LEFT,
-            width=STATUS_LABEL_WIDTH,
-            height=6,
+            wraplength=STATUS_WRAP_LENGTH,
         ).pack(anchor="w", fill=tk.X, pady=(4, 0))
         panel.columnconfigure(1, weight=1)
 
@@ -427,6 +421,17 @@ class InterferometryApp(tk.Tk):
     def _bind_commit_entry(self, entry: ttk.Entry) -> None:
         entry.bind("<Return>", self._commit_text_fields)
         entry.bind("<KP_Enter>", self._commit_text_fields)
+
+    def _set_status(self, *lines: str) -> None:
+        self.status.set(format_status_text(*lines))
+
+    def _set_runtime_status(self) -> None:
+        self.status.set(
+            format_runtime_status_text(
+                self._format_averaging_status(),
+                self._latest_backend_status,
+            )
+        )
 
     def _build_plots(self) -> None:
         plot_frame = ttk.Frame(self, padding=(0, 10, 10, 10))
@@ -686,13 +691,13 @@ class InterferometryApp(tk.Tk):
             y_max = parse_scale_value(max_box.text)
             validate_scale_limits(y_min, y_max)
         except ValueError as exc:
-            self.status.set(f"{plot_control_label(name)} scale not applied: {exc}")
+            self._set_status(f"{plot_control_label(name)} scale not applied:", str(exc))
             return
         self._plot_scale_inputs[min_key] = min_box.text.strip()
         self._plot_scale_inputs[max_key] = max_box.text.strip()
         self._save_settings()
         self._apply_panel_plot_scales(draw=True)
-        self.status.set(f"{plot_control_label(name)} scale committed")
+        self._set_status(f"{plot_control_label(name)} scale committed")
 
     def _latest_plot_values(self, name: str) -> np.ndarray | None:
         return {
@@ -721,7 +726,7 @@ class InterferometryApp(tk.Tk):
             backend.start()
         except Exception as exc:
             messagebox.showerror("Unable to start", str(exc))
-            self.status.set(f"Start failed: {exc}")
+            self._set_status("Start failed:", str(exc))
             return
 
         self._latest_config = config
@@ -738,7 +743,7 @@ class InterferometryApp(tk.Tk):
         self._running = True
         self.start_button.configure(state=tk.DISABLED)
         self.stop_button.configure(state=tk.NORMAL)
-        self.status.set(f"Running; X-corr smoothing {config.averaging_blocks} blocks")
+        self._set_status("Running.", f"X-corr smoothing {config.averaging_blocks} blocks")
         self.after(20, self._update_loop)
 
     def stop(self) -> None:
@@ -747,9 +752,9 @@ class InterferometryApp(tk.Tk):
             try:
                 self._backend.stop()
             except Exception as exc:
-                self.status.set(f"Stopped with backend warning: {exc}")
+                self._set_status("Stopped with backend warning:", str(exc))
             else:
-                self.status.set("Stopped")
+                self._set_status("Stopped")
         self._backend = None
         self.start_button.configure(state=tk.NORMAL)
         self.stop_button.configure(state=tk.DISABLED)
@@ -759,7 +764,7 @@ class InterferometryApp(tk.Tk):
         if self._backend is not None:
             self._backend.reset_average()
             self._reset_fringe_history()
-            self.status.set("Averaging reset")
+            self._set_status("Averaging reset")
 
     def _update_loop(self) -> None:
         if not self._running or self._backend is None:
@@ -781,10 +786,7 @@ class InterferometryApp(tk.Tk):
                 if update.result is not None and self._should_draw_result():
                     self._draw_result(update.result)
 
-            self.status.set(
-                f"Running backend. {self._format_averaging_status()} "
-                f"{format_backend_status(self._latest_backend_status)}"
-            )
+            self._set_runtime_status()
         except Exception as exc:
             self.stop()
             messagebox.showerror("Runtime error", str(exc))
@@ -1058,7 +1060,7 @@ class InterferometryApp(tk.Tk):
         try:
             adjusted = self._target_adjusted_inputs(self._committed_inputs)
         except ValueError as exc:
-            self.status.set(str(exc))
+            self._set_status(str(exc))
             return
 
         changed = any(
@@ -1182,7 +1184,7 @@ class InterferometryApp(tk.Tk):
             validate_continuum_inputs(new_continuum_inputs)
             validate_visibility_inputs(new_visibility_inputs)
         except Exception as exc:
-            self.status.set(f"Text fields not committed: {exc}")
+            self._set_status("Text fields not committed:", str(exc))
             return "break"
 
         self._update_calculated_observing_frequency(new_inputs)
@@ -1208,7 +1210,7 @@ class InterferometryApp(tk.Tk):
         if self._running:
             self._apply_runtime_config_if_needed()
         else:
-            self.status.set("Text fields committed")
+            self._set_status("Text fields committed")
         return "break"
 
     def _update_calculated_observing_frequency(self, inputs: dict[str, str]) -> None:
@@ -1224,7 +1226,7 @@ class InterferometryApp(tk.Tk):
             self._refresh_target_coordinate_fields()
             config = self._read_config()
         except Exception as exc:
-            self.status.set(f"Live settings not applied yet: {exc}")
+            self._set_status("Live settings not applied yet:", str(exc))
             return False
 
         source_mode = self.source_mode.get()
@@ -1246,11 +1248,11 @@ class InterferometryApp(tk.Tk):
         self._latest_fringe_reset_signature = reset_signature
         self._latest_backend_status = {}
         self._last_draw_time = 0.0
-        reset_text = "; fringe history reset" if model_changed else ""
-        self.status.set(
-            "Live settings sent to backend"
-            f"{reset_text}; FX bins {config.bins}, "
-            f"X-corr smoothing {config.averaging_blocks} blocks"
+        self._set_status(
+            "Live settings sent to backend",
+            "Fringe history reset" if model_changed else "Runtime settings updated",
+            f"FX bins {config.bins}",
+            f"X-corr smoothing {config.averaging_blocks} blocks",
         )
         return True
 
@@ -1273,7 +1275,7 @@ class InterferometryApp(tk.Tk):
                 validate_scale_limits(y_min, y_max)
                 axis.set_ylim(y_min, y_max)
         except ValueError as exc:
-            self.status.set(f"Panel scale not applied: {exc}")
+            self._set_status("Panel scale not applied:", str(exc))
             return
         if draw:
             self.canvas.draw_idle()
@@ -1333,7 +1335,7 @@ class InterferometryApp(tk.Tk):
             self._last_visibility_record_time = now
         except OSError as exc:
             self.record_visibility_mode.set("off")
-            self.status.set(f"Visibility recording stopped: {exc}")
+            self._set_status("Visibility recording stopped:", str(exc))
 
     def _save_settings(self) -> None:
         settings = {
@@ -1359,7 +1361,7 @@ class InterferometryApp(tk.Tk):
         try:
             SETTINGS_PATH.write_text(json.dumps(settings, indent=2), encoding="utf-8")
         except OSError as exc:
-            self.status.set(f"Settings not saved: {exc}")
+            self._set_status("Settings not saved:", str(exc))
 
     def _close(self) -> None:
         self._save_settings()
@@ -1375,6 +1377,55 @@ def smooth_line(values: np.ndarray, bins: int) -> np.ndarray:
     width = min(int(bins), values.size)
     kernel = np.ones(width, dtype=np.float64) / width
     return np.convolve(values, kernel, mode="same")
+
+
+def format_fixed_lines(lines: tuple[str, ...], line_count: int) -> str:
+    expanded: list[str] = []
+    for line in lines:
+        parts = str(line).splitlines()
+        expanded.extend(parts if parts else [""])
+    expanded = expanded[:line_count]
+    expanded.extend([" "] * (line_count - len(expanded)))
+    return "\n".join(expanded)
+
+
+def format_status_text(*lines: str) -> str:
+    return format_fixed_lines(lines, STATUS_LINE_COUNT)
+
+
+def format_runtime_status_text(averaging_status: str, status: dict[str, object]) -> str:
+    if not status:
+        return format_status_text(
+            "Running backend.",
+            averaging_status,
+            "Backend status pending.",
+        )
+
+    if "queued" not in status and "chunks" not in status:
+        return format_status_text(
+            f"Running backend. {averaging_status}",
+            f"Processed {status.get('processed', 0)}, bins {status.get('active_bins', '--')}",
+            (
+                f"Smooth {status.get('active_averaging_blocks', '--')}, "
+                f"stale {status.get('dropped_results', 0)}"
+            ),
+        )
+
+    return format_status_text(
+        f"Running backend. {averaging_status}",
+        (
+            f"B210 q {status.get('queued', 0)}, "
+            f"chunks {status.get('chunks', 0)}, drop {status.get('dropped', 0)}"
+        ),
+        (
+            f"FFT {status.get('reads', 0)}, bins {status.get('active_bins', '--')}, "
+            f"smooth {status.get('active_averaging_blocks', '--')}"
+        ),
+        (
+            f"Stale {status.get('dropped_results', 0)}, "
+            f"ovf {status.get('overflows', 0)}, to {status.get('timeouts', 0)}"
+        ),
+    )
 
 
 def format_visibility_status(continuum) -> str:
@@ -1616,30 +1667,6 @@ def validate_visibility_inputs(values: dict[str, str]) -> None:
 def validate_scale_limits(y_min: float, y_max: float) -> None:
     if y_min >= y_max:
         raise ValueError("Manual scale minimum must be less than maximum.")
-
-
-def format_backend_status(status: dict[str, object]) -> str:
-    if not status:
-        return ""
-    if "queued" not in status and "chunks" not in status:
-        return (
-            f"processed {status.get('processed', 0)}, "
-            f"active bins {status.get('active_bins', '--')}, "
-            f"active smooth {status.get('active_averaging_blocks', '--')}, "
-            f"stale plots {status.get('dropped_results', 0)}"
-        )
-    return (
-        f"B210 queue {status.get('queued', 0)}, "
-        f"chunks {status.get('chunks', 0)}, "
-        f"dropped {status.get('dropped', 0)}, "
-        f"FFT blocks {status.get('reads', 0)}, "
-        f"processed {status.get('processed', 0)}, "
-        f"active bins {status.get('active_bins', '--')}, "
-        f"active smooth {status.get('active_averaging_blocks', '--')}, "
-        f"stale plots {status.get('dropped_results', 0)}, "
-        f"overflows {status.get('overflows', 0)}, "
-        f"timeouts {status.get('timeouts', 0)}"
-    )
 
 
 def load_settings() -> dict[str, str]:
