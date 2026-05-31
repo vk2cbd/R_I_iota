@@ -195,12 +195,21 @@ class InterferometryApp(tk.Tk):
     def _build_controls(self) -> None:
         controls = ttk.Frame(self)
         controls.pack(side=tk.LEFT, fill=tk.Y)
-        controls_canvas = tk.Canvas(controls, width=320, highlightthickness=0)
+        controls.rowconfigure(0, weight=1)
+        controls.columnconfigure(0, weight=1)
+
+        scroll_area = ttk.Frame(controls)
+        scroll_area.grid(row=0, column=0, sticky="nsew")
+        ttk.Separator(controls).grid(row=1, column=0, sticky="ew")
+        fixed_status = ttk.Frame(controls, padding=(10, 8))
+        fixed_status.grid(row=2, column=0, sticky="ew")
+
+        controls_canvas = tk.Canvas(scroll_area, width=320, highlightthickness=0)
         controls_scroll = ttk.Scrollbar(
-            controls, orient=tk.VERTICAL, command=controls_canvas.yview
+            scroll_area, orient=tk.VERTICAL, command=controls_canvas.yview
         )
         controls_canvas.configure(yscrollcommand=controls_scroll.set)
-        controls_canvas.pack(side=tk.LEFT, fill=tk.Y, expand=True)
+        controls_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         controls_scroll.pack(side=tk.RIGHT, fill=tk.Y)
         panel = ttk.Frame(controls_canvas, padding=10)
         controls_window = controls_canvas.create_window((0, 0), window=panel, anchor="nw")
@@ -363,18 +372,15 @@ class InterferometryApp(tk.Tk):
         self.reset_button = ttk.Button(panel, text="Reset Avg", command=self.reset_average)
         self.reset_button.grid(row=button_row, column=0, columnspan=2, sticky="ew", pady=3)
 
-        ttk.Separator(panel).grid(row=button_row + 1, column=0, columnspan=2, sticky="ew", pady=12)
         self.status = tk.StringVar(value="Ready")
-        ttk.Label(panel, textvariable=self.status, wraplength=240).grid(
-            row=button_row + 2, column=0, columnspan=2, sticky="w"
-        )
+        ttk.Label(fixed_status, textvariable=self.status, wraplength=280).pack(anchor="w")
         self.visibility_status = tk.StringVar(value="Visibility: --")
-        ttk.Label(panel, textvariable=self.visibility_status, wraplength=240).grid(
-            row=button_row + 3, column=0, columnspan=2, sticky="w", pady=(8, 0)
+        ttk.Label(fixed_status, textvariable=self.visibility_status, wraplength=280).pack(
+            anchor="w", pady=(6, 0)
         )
         self.fringe_model_status = tk.StringVar(value="Fringe model: --")
-        ttk.Label(panel, textvariable=self.fringe_model_status, wraplength=240).grid(
-            row=button_row + 4, column=0, columnspan=2, sticky="w", pady=(8, 0)
+        ttk.Label(fixed_status, textvariable=self.fringe_model_status, wraplength=280).pack(
+            anchor="w", pady=(6, 0)
         )
         panel.columnconfigure(1, weight=1)
 
@@ -474,7 +480,7 @@ class InterferometryApp(tk.Tk):
         (self.fringe_stopped_phase_line,) = self.ax_fringe_phase.plot(
             [], [], color="#2ca02c", lw=1.1, label="Stopped phase"
         )
-        self.ax_fringe_phase.legend(loc="upper right", framealpha=0.8)
+        self.ax_fringe_phase.legend(loc="upper left", framealpha=0.8)
         self.fringe_time_slider = Slider(
             self.ax_fringe_time_slider,
             "Time span (min)",
@@ -1220,14 +1226,23 @@ class InterferometryApp(tk.Tk):
         if config == self._latest_config and source_mode == self._latest_source_mode:
             return True
 
+        model_changed = (
+            source_mode != self._latest_source_mode
+            or fringe_model_config_changed(self._latest_config, config)
+        )
         self._backend.update_config(config, source_mode)
+        if model_changed:
+            self._backend.reset_average()
+            self._reset_fringe_history()
         self._latest_config = config
         self._latest_source_mode = source_mode
         self._latest_backend_status = {}
         self._last_draw_time = 0.0
+        reset_text = "; fringe history reset" if model_changed else ""
         self.status.set(
-            "Live settings sent to backend; "
-            f"FX bins {config.bins}, X-corr smoothing {config.averaging_blocks} blocks"
+            "Live settings sent to backend"
+            f"{reset_text}; FX bins {config.bins}, "
+            f"X-corr smoothing {config.averaging_blocks} blocks"
         )
         return True
 
@@ -1352,6 +1367,20 @@ def smooth_line(values: np.ndarray, bins: int) -> np.ndarray:
     width = min(int(bins), values.size)
     kernel = np.ones(width, dtype=np.float64) / width
     return np.convolve(values, kernel, mode="same")
+
+
+def fringe_model_config_changed(old: ObservationConfig, new: ObservationConfig) -> bool:
+    fields = (
+        "observing_frequency_mhz",
+        "ra_deg",
+        "dec_deg",
+        "observer_lat_deg",
+        "observer_lon_deg",
+        "baseline_east_m",
+        "baseline_north_m",
+        "baseline_up_m",
+    )
+    return any(getattr(old, field) != getattr(new, field) for field in fields)
 
 
 def autoscale_positive_axis(axis, values: np.ndarray) -> None:

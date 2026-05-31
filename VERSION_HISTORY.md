@@ -1,5 +1,14 @@
 # Version History
 
+## 0.4.5-theta - Fringe Model Readout Layout
+
+- Moved the raw/stopped phase legend to the left side of the stopped-fringe
+  pane so it does not cover new data at the right edge.
+- Moved status, visibility, and fringe-model readouts into a fixed left-side
+  panel that remains visible while the parameter controls scroll.
+- Reset fringe display history when target/model parameters change so Moon and
+  manual RA/DEC switches visibly update the stopped-phase plot.
+
 ## 0.4.4-theta - RA Hours Display
 
 - Changed the GUI target RA field from decimal degrees to hours format.
