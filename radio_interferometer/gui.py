@@ -46,7 +46,7 @@ FIELD_DEFAULTS = [
     ("observing_frequency_mhz", "Observing freq (MHz)", "4800"),
     ("lnb_lo_frequency_mhz", "LNB LO freq (MHz)", "5950"),
     ("intermediate_frequency_mhz", "B210 tune IF (MHz)", "1150"),
-    ("ra_deg", "Target RA (deg)", "83.6331"),
+    ("ra_hours", "Target RA (HH:MM:SS)", "05:34:31.9"),
     ("dec_deg", "Target DEC (deg)", "22.0145"),
     ("observer_lat_deg", "Observer lat (deg)", "-33.8688"),
     ("observer_lon_deg", "Observer lon (deg)", "151.2093"),
@@ -1026,7 +1026,7 @@ class InterferometryApp(tk.Tk):
                 observer_lat_deg=observer_lat_deg,
                 observer_lon_deg=observer_lon_deg,
             )
-            adjusted["ra_deg"] = f"{coords.ra_deg:.4f}"
+            adjusted["ra_hours"] = format_ra_hours(coords.ra_deg / 15.0)
             adjusted["dec_deg"] = f"{coords.dec_deg:.4f}"
         return adjusted
 
@@ -1036,7 +1036,7 @@ class InterferometryApp(tk.Tk):
 
         target_mode = self._target_mode_value()
         manual = target_mode == MANUAL_TARGET_SOURCE
-        for key in ("ra_deg", "dec_deg"):
+        for key in ("ra_hours", "dec_deg"):
             entry = self.input_entries.get(key)
             if entry is not None:
                 entry.configure(state=tk.NORMAL if manual else "readonly")
@@ -1052,12 +1052,12 @@ class InterferometryApp(tk.Tk):
 
         changed = any(
             adjusted[key] != self._committed_inputs.get(key)
-            for key in ("ra_deg", "dec_deg")
+            for key in ("ra_hours", "dec_deg")
         )
         if not force and not changed:
             return
 
-        for key in ("ra_deg", "dec_deg"):
+        for key in ("ra_hours", "dec_deg"):
             self._committed_inputs[key] = adjusted[key]
             self.inputs[key].set(adjusted[key])
         if not self._loading_settings:
@@ -1066,14 +1066,13 @@ class InterferometryApp(tk.Tk):
     def _read_config(self, raw_inputs: dict[str, str] | None = None) -> ObservationConfig:
         raw_inputs = self._committed_inputs if raw_inputs is None else raw_inputs
         raw_inputs = self._target_adjusted_inputs(raw_inputs)
-        target_mode = self._target_mode_value()
         values: dict[str, float | int | str] = {}
         for key, _, _default in FIELD_DEFAULTS:
             raw = raw_inputs[key].strip()
             if key == "b210_device_args":
                 values[key] = raw
-            elif key in {"ra_deg", "dec_deg"} and target_mode != MANUAL_TARGET_SOURCE:
-                values[key] = float(raw)
+            elif key == "ra_hours":
+                values["ra_deg"] = parse_ra_hours_text(raw) * 15.0
             elif key in {
                 "bins",
                 "averaging_blocks",
@@ -1108,8 +1107,10 @@ class InterferometryApp(tk.Tk):
             raise ValueError("Spectrum smoothing bins must be at least 1.")
         if not -90 <= values["observer_lat_deg"] <= 90:
             raise ValueError("Observer latitude must be between -90 and 90 degrees.")
+        if not 0 <= values["ra_deg"] < 360:
+            raise ValueError("Target RA must be between 00:00:00 and <24:00:00.")
         if not -90 <= values["dec_deg"] <= 90:
-            raise ValueError("Source DEC must be between -90 and 90 degrees.")
+            raise ValueError("Target DEC must be between -90 and 90 degrees.")
         if values["b210_read_timeout_ms"] < 100:
             raise ValueError("B210 read timeout must be at least 100 ms.")
         if values["b210_stream_chunk_samples"] < 1024:
@@ -1181,8 +1182,10 @@ class InterferometryApp(tk.Tk):
         ):
             new_inputs[key] = format_no_decimal(float(new_inputs[key]))
             self.inputs[key].set(new_inputs[key])
+        new_inputs["ra_hours"] = format_ra_hours(parse_ra_hours_text(new_inputs["ra_hours"]))
+        self.inputs["ra_hours"].set(new_inputs["ra_hours"])
         if self._target_mode_value() != MANUAL_TARGET_SOURCE:
-            for key in ("ra_deg", "dec_deg"):
+            for key in ("ra_hours", "dec_deg"):
                 self.inputs[key].set(new_inputs[key])
 
         self._committed_inputs = new_inputs
@@ -1433,6 +1436,47 @@ def format_no_decimal(value: float) -> str:
     return f"{value:.0f}"
 
 
+def parse_ra_hours_text(value: str) -> float:
+    text = value.strip().lower()
+    if not text:
+        raise ValueError("Target RA must not be empty.")
+    if any(marker in text for marker in ("h", "m", "s")):
+        text = text.replace("h", ":").replace("m", ":").replace("s", "")
+    if ":" in text:
+        parts = [part.strip() for part in text.split(":")]
+        if not 1 <= len(parts) <= 3 or any(part == "" for part in parts):
+            raise ValueError("Target RA must be decimal hours or HH:MM:SS.")
+        hours = float(parts[0])
+        minutes = float(parts[1]) if len(parts) >= 2 else 0.0
+        seconds = float(parts[2]) if len(parts) >= 3 else 0.0
+        if hours < 0 or minutes < 0 or seconds < 0 or minutes >= 60 or seconds >= 60:
+            raise ValueError("Target RA must be in the range 00:00:00 to <24:00:00.")
+        value_hours = hours + minutes / 60.0 + seconds / 3600.0
+    else:
+        try:
+            value_hours = float(text)
+        except ValueError as exc:
+            raise ValueError("Target RA must be decimal hours or HH:MM:SS.") from exc
+    if not np.isfinite(value_hours) or not 0.0 <= value_hours < 24.0:
+        raise ValueError("Target RA must be in the range 00:00:00 to <24:00:00.")
+    return value_hours
+
+
+def format_ra_hours(value_hours: float) -> str:
+    value_hours = value_hours % 24.0
+    hours = int(value_hours)
+    minutes_float = (value_hours - hours) * 60.0
+    minutes = int(minutes_float)
+    seconds = (minutes_float - minutes) * 60.0
+    if seconds >= 59.995:
+        seconds = 0.0
+        minutes += 1
+    if minutes >= 60:
+        minutes = 0
+        hours = (hours + 1) % 24
+    return f"{hours:02d}:{minutes:02d}:{seconds:04.1f}"
+
+
 def wrap_degrees(value: float) -> float:
     return ((value + 180.0) % 360.0) - 180.0
 
@@ -1503,6 +1547,13 @@ def load_settings() -> dict[str, str]:
     except (OSError, json.JSONDecodeError):
         return settings
     if isinstance(loaded, dict):
+        if "ra_hours" not in loaded and "ra_deg" in loaded:
+            try:
+                settings["ra_hours"] = format_ra_hours(
+                    parse_float_text(str(loaded["ra_deg"]), "Saved RA") / 15.0
+                )
+            except ValueError:
+                settings["ra_hours"] = DEFAULT_SETTINGS["ra_hours"]
         for key, value in loaded.items():
             if key in settings:
                 settings[key] = str(value)
@@ -1528,6 +1579,10 @@ def load_settings() -> dict[str, str]:
     settings["fringe_time_window_minutes"] = (
         f"{parse_fringe_window_minutes(settings['fringe_time_window_minutes']):.0f}"
     )
+    try:
+        settings["ra_hours"] = format_ra_hours(parse_ra_hours_text(settings["ra_hours"]))
+    except ValueError:
+        settings["ra_hours"] = DEFAULT_SETTINGS["ra_hours"]
     for key in (
         "observing_frequency_mhz",
         "lnb_lo_frequency_mhz",

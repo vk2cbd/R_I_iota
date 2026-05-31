@@ -1,5 +1,12 @@
 # Version History
 
+## 0.4.4-theta - RA Hours Display
+
+- Changed the GUI target RA field from decimal degrees to hours format.
+- Manual RA now accepts `HH:MM:SS`, `04h31m40s`, or decimal hours input and
+  converts internally to degrees for the fringe model.
+- Migrates old saved decimal-degree RA settings to hours on load.
+
 ## 0.4.3-theta - Topocentric Moon Coordinates
 
 - Verified Sun/Moon RA/DEC against NASA/JPL Horizons reference values.
