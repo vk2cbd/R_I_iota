@@ -6,6 +6,7 @@ import pytest
 
 from radio_interferometer.gui import (
     apply_display_fringe_stop,
+    apply_target_display_rounding,
     format_ra_hours,
     format_fringe_model_status,
     format_runtime_status_text,
@@ -13,6 +14,8 @@ from radio_interferometer.gui import (
     format_visibility_status,
     fringe_reset_signature,
     parse_ra_hours_text,
+    resolve_automatic_target_coordinates,
+    runtime_configs_match,
 )
 from radio_interferometer.sources import ObservationConfig
 
@@ -76,6 +79,38 @@ def test_display_fringe_stop_uses_east_conj_west_sign() -> None:
     stopped = apply_display_fringe_stop(raw_visibility, model)
 
     assert np.angle(stopped) == pytest.approx(0.0, abs=1e-12)
+
+
+def test_automatic_target_coordinates_keep_full_precision_for_config() -> None:
+    raw_inputs = {
+        "observer_lat_deg": "-32.9283",
+        "observer_lon_deg": "151.7817",
+        "ra_hours": "00:00:00.0",
+        "dec_deg": "0.0",
+    }
+    coords = resolve_automatic_target_coordinates(
+        "Sun",
+        raw_inputs,
+        datetime(2026, 6, 1, 0, 0, tzinfo=timezone.utc),
+    )
+
+    display_inputs = apply_target_display_rounding(raw_inputs, coords)
+    display_ra_deg = parse_ra_hours_text(display_inputs["ra_hours"]) * 15.0
+    display_dec_deg = float(display_inputs["dec_deg"])
+
+    assert coords is not None
+    assert display_inputs["ra_hours"] == format_ra_hours(coords.ra_deg / 15.0)
+    assert display_dec_deg == pytest.approx(coords.dec_deg, abs=0.00005)
+    assert display_ra_deg != pytest.approx(coords.ra_deg, abs=1e-10)
+
+
+def test_runtime_config_match_ignores_automatic_target_ephemeris_drift() -> None:
+    base = make_config(ra_deg=70.0, dec_deg=22.0)
+    drifted = make_config(ra_deg=70.01, dec_deg=22.01)
+
+    assert runtime_configs_match(drifted, base, "Sun")
+    assert not runtime_configs_match(drifted, base, "Manual RA/DEC")
+    assert not runtime_configs_match(make_config(bandwidth_mhz=31.0), base, "Sun")
 
 
 def test_fringe_reset_signature_detects_manual_target_change() -> None:

@@ -1,5 +1,14 @@
 # Version History
 
+## 0.4.10-theta - Full Precision Solar-System Targets
+
+- Kept full-precision Sun/Moon coordinates for the runtime configuration and
+  fringe model while continuing to show rounded RA/DEC values in the GUI.
+- Avoided unnecessary backend updates from normal automatic ephemeris drift so
+  B210 streaming and averaging remain stable while the display model advances.
+- Added tests covering rounded target display values and full-precision
+  automatic target handling.
+
 ## 0.4.9-theta - Fringe Stop Sign Correction
 
 - Corrected the display fringe-stopping sign for the `East * conj(West)`

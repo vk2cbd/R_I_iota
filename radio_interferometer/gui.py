@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import deque
 import csv
+from dataclasses import replace
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -1028,20 +1029,12 @@ class InterferometryApp(tk.Tk):
         raw_inputs: dict[str, str],
         when: datetime | None = None,
     ) -> dict[str, str]:
-        adjusted = dict(raw_inputs)
-        target_mode = self._target_mode_value()
-        if target_mode != MANUAL_TARGET_SOURCE:
-            observer_lat_deg = parse_float_text(adjusted["observer_lat_deg"], "Observer latitude")
-            observer_lon_deg = parse_float_text(adjusted["observer_lon_deg"], "Observer longitude")
-            coords = target_coordinates(
-                target_mode,
-                when,
-                observer_lat_deg=observer_lat_deg,
-                observer_lon_deg=observer_lon_deg,
-            )
-            adjusted["ra_hours"] = format_ra_hours(coords.ra_deg / 15.0)
-            adjusted["dec_deg"] = f"{coords.dec_deg:.4f}"
-        return adjusted
+        coords = resolve_automatic_target_coordinates(
+            self._target_mode_value(),
+            raw_inputs,
+            when,
+        )
+        return apply_target_display_rounding(raw_inputs, coords)
 
     def _refresh_target_coordinate_fields(self, force: bool = False) -> None:
         if not hasattr(self, "inputs") or not hasattr(self, "input_entries"):
@@ -1078,14 +1071,25 @@ class InterferometryApp(tk.Tk):
 
     def _read_config(self, raw_inputs: dict[str, str] | None = None) -> ObservationConfig:
         raw_inputs = self._committed_inputs if raw_inputs is None else raw_inputs
-        raw_inputs = self._target_adjusted_inputs(raw_inputs)
+        target_coords = resolve_automatic_target_coordinates(
+            self._target_mode_value(),
+            raw_inputs,
+        )
         values: dict[str, float | int | str] = {}
         for key, _, _default in FIELD_DEFAULTS:
             raw = raw_inputs[key].strip()
             if key == "b210_device_args":
                 values[key] = raw
             elif key == "ra_hours":
-                values["ra_deg"] = parse_ra_hours_text(raw) * 15.0
+                values["ra_deg"] = (
+                    target_coords.ra_deg
+                    if target_coords is not None
+                    else parse_ra_hours_text(raw) * 15.0
+                )
+            elif key == "dec_deg":
+                values[key] = (
+                    target_coords.dec_deg if target_coords is not None else float(raw)
+                )
             elif key in {
                 "bins",
                 "averaging_blocks",
@@ -1230,15 +1234,20 @@ class InterferometryApp(tk.Tk):
             return False
 
         source_mode = self.source_mode.get()
-        if config == self._latest_config and source_mode == self._latest_source_mode:
-            return True
-
         reset_signature = fringe_reset_signature(
             config,
             self._target_mode_value(),
             source_mode,
         )
         model_changed = reset_signature != self._latest_fringe_reset_signature
+        if (
+            source_mode == self._latest_source_mode
+            and runtime_configs_match(config, self._latest_config, self._target_mode_value())
+            and not model_changed
+        ):
+            self._latest_config = config
+            return True
+
         self._backend.update_config(config, source_mode)
         if model_changed:
             self._backend.reset_average()
@@ -1397,6 +1406,48 @@ def apply_display_fringe_stop(visibility: complex, model) -> complex:
     """Remove geometric phase from an East * conj(West) visibility."""
 
     return visibility * np.exp(1j * model.phase_rad)
+
+
+def resolve_automatic_target_coordinates(
+    target_mode: str,
+    raw_inputs: dict[str, str],
+    when: datetime | None = None,
+):
+    if target_mode == MANUAL_TARGET_SOURCE:
+        return None
+
+    observer_lat_deg = parse_float_text(raw_inputs["observer_lat_deg"], "Observer latitude")
+    observer_lon_deg = parse_float_text(raw_inputs["observer_lon_deg"], "Observer longitude")
+    return target_coordinates(
+        target_mode,
+        when,
+        observer_lat_deg=observer_lat_deg,
+        observer_lon_deg=observer_lon_deg,
+    )
+
+
+def apply_target_display_rounding(raw_inputs: dict[str, str], coords) -> dict[str, str]:
+    adjusted = dict(raw_inputs)
+    if coords is not None:
+        adjusted["ra_hours"] = format_ra_hours(coords.ra_deg / 15.0)
+        adjusted["dec_deg"] = f"{coords.dec_deg:.4f}"
+    return adjusted
+
+
+def runtime_configs_match(
+    config: ObservationConfig,
+    latest_config: ObservationConfig | None,
+    target_mode: str,
+) -> bool:
+    if latest_config is None:
+        return False
+    if target_mode == MANUAL_TARGET_SOURCE:
+        return config == latest_config
+    return replace(config, ra_deg=0.0, dec_deg=0.0) == replace(
+        latest_config,
+        ra_deg=0.0,
+        dec_deg=0.0,
+    )
 
 
 def format_runtime_status_text(averaging_status: str, status: dict[str, object]) -> str:
