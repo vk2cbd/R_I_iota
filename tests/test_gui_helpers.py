@@ -1,7 +1,12 @@
+from datetime import datetime, timezone
+from types import SimpleNamespace
+
 import pytest
 
 from radio_interferometer.gui import (
     format_ra_hours,
+    format_fringe_model_status,
+    format_visibility_status,
     fringe_reset_signature,
     parse_ra_hours_text,
 )
@@ -20,6 +25,26 @@ def test_format_ra_hours_returns_hms_display() -> None:
 def test_parse_ra_hours_rejects_degree_like_value() -> None:
     with pytest.raises(ValueError):
         parse_ra_hours_text("67.9186")
+
+
+def test_readout_formatters_keep_stable_line_counts() -> None:
+    assert len(format_visibility_status(None).splitlines()) == 4
+    assert len(format_fringe_model_status(None, None, None).splitlines()) == 6
+
+    continuum = SimpleNamespace(
+        visibility=1.0 + 2.0j,
+        amplitude=2.236,
+        phase_rad=1.107,
+        snr=12.3,
+    )
+    model = SimpleNamespace(
+        when_utc=datetime(2026, 5, 31, 0, 0, tzinfo=timezone.utc),
+        delay_s=1e-9,
+        phase_rad=0.5,
+        phase_rate_rad_s=0.01,
+    )
+    assert len(format_visibility_status(continuum).splitlines()) == 4
+    assert len(format_fringe_model_status(model, continuum.visibility, 1.0j).splitlines()) == 6
 
 
 def test_fringe_reset_signature_detects_manual_target_change() -> None:

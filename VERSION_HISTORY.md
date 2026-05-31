@@ -1,5 +1,12 @@
 # Version History
 
+## 0.4.7-theta - Stable Readout Panel
+
+- Fixed the bottom-left status/readout panel height so the scrollable GUI
+  controls no longer jump when readout text length changes.
+- Gave visibility and fringe-model readouts fixed line counts so missing
+  continuum updates no longer collapse the panel content.
+
 ## 0.4.6-theta - Moon Tracking Averaging Fix
 
 - Stopped automatic Moon ephemeris drift from repeatedly resetting backend

@@ -36,6 +36,8 @@ PLOT_CONTROL_GAP = 0.006
 PLOT_CONTROL_FONT_SIZE = 8
 GRID_MAJOR_COLOR = "#d0d0d0"
 GRID_MINOR_COLOR = "#e8e8e8"
+STATUS_PANEL_HEIGHT = 360
+STATUS_LABEL_WIDTH = 34
 FRINGE_WINDOW_MINUTES_MIN = 10.0
 FRINGE_WINDOW_MINUTES_MAX = 180.0
 FRINGE_WINDOW_MINUTES_DEFAULT = 10.0
@@ -204,6 +206,9 @@ class InterferometryApp(tk.Tk):
         ttk.Separator(controls).grid(row=1, column=0, sticky="ew")
         fixed_status = ttk.Frame(controls, padding=(10, 8))
         fixed_status.grid(row=2, column=0, sticky="ew")
+        fixed_status.configure(height=STATUS_PANEL_HEIGHT)
+        fixed_status.grid_propagate(False)
+        fixed_status.pack_propagate(False)
 
         controls_canvas = tk.Canvas(scroll_area, width=320, highlightthickness=0)
         controls_scroll = ttk.Scrollbar(
@@ -374,15 +379,34 @@ class InterferometryApp(tk.Tk):
         self.reset_button.grid(row=button_row, column=0, columnspan=2, sticky="ew", pady=3)
 
         self.status = tk.StringVar(value="Ready")
-        ttk.Label(fixed_status, textvariable=self.status, wraplength=280).pack(anchor="w")
-        self.visibility_status = tk.StringVar(value="Visibility: --")
-        ttk.Label(fixed_status, textvariable=self.visibility_status, wraplength=280).pack(
-            anchor="w", pady=(6, 0)
+        tk.Label(
+            fixed_status,
+            textvariable=self.status,
+            anchor="nw",
+            justify=tk.LEFT,
+            width=STATUS_LABEL_WIDTH,
+            height=6,
+        ).pack(anchor="w", fill=tk.X)
+        self.visibility_status = tk.StringVar(value=format_visibility_status(None))
+        tk.Label(
+            fixed_status,
+            textvariable=self.visibility_status,
+            anchor="nw",
+            justify=tk.LEFT,
+            width=STATUS_LABEL_WIDTH,
+            height=4,
+        ).pack(anchor="w", fill=tk.X, pady=(4, 0))
+        self.fringe_model_status = tk.StringVar(
+            value=format_fringe_model_status(None, None, None)
         )
-        self.fringe_model_status = tk.StringVar(value="Fringe model: --")
-        ttk.Label(fixed_status, textvariable=self.fringe_model_status, wraplength=280).pack(
-            anchor="w", pady=(6, 0)
-        )
+        tk.Label(
+            fixed_status,
+            textvariable=self.fringe_model_status,
+            anchor="nw",
+            justify=tk.LEFT,
+            width=STATUS_LABEL_WIDTH,
+            height=6,
+        ).pack(anchor="w", fill=tk.X, pady=(4, 0))
         panel.columnconfigure(1, weight=1)
 
         self._watch_control(self.source_mode)
@@ -729,6 +753,7 @@ class InterferometryApp(tk.Tk):
         self._backend = None
         self.start_button.configure(state=tk.NORMAL)
         self.stop_button.configure(state=tk.DISABLED)
+        self.fringe_model_status.set(format_fringe_model_status(None, None, None))
 
     def reset_average(self) -> None:
         if self._backend is not None:
@@ -801,19 +826,12 @@ class InterferometryApp(tk.Tk):
 
         if continuum is not None:
             stopped_visibility = continuum.visibility * np.exp(-1j * model.phase_rad)
-            self.visibility_status.set(
-                "Visibility: "
-                f"Re {continuum.visibility.real:.4g}, "
-                f"Im {continuum.visibility.imag:.4g}, "
-                f"Amp {continuum.amplitude:.4g}, "
-                f"Phase {continuum.phase_rad:.4f} rad, "
-                f"SNR {continuum.snr:.2f}"
-            )
+            self.visibility_status.set(format_visibility_status(continuum))
             self._set_fringe_model_status(model, continuum.visibility, stopped_visibility)
             self._append_fringe_sample(continuum.visibility, stopped_visibility)
             self._record_visibility_if_needed(config, continuum, peak_lag_bin)
         else:
-            self.visibility_status.set("Visibility: --")
+            self.visibility_status.set(format_visibility_status(None))
             self._set_fringe_model_status(model, None, None)
         self._draw_fringe_history()
 
@@ -991,28 +1009,9 @@ class InterferometryApp(tk.Tk):
         raw_visibility: complex | None,
         stopped_visibility: complex | None,
     ) -> None:
-        delay_ns = model.delay_s * 1_000_000_000.0
-        model_phase_deg = wrap_degrees(np.degrees(model.phase_rad))
-        rate_hz = model.phase_rate_rad_s / (2.0 * np.pi)
-        rate_deg_s = np.degrees(model.phase_rate_rad_s)
-        lines = [
-            f"Fringe model {model.when_utc.strftime('%H:%M:%S')} UTC",
-            f"Delay {delay_ns:+.2f} ns",
-            f"Phase {model_phase_deg:+.1f} deg",
-            f"Rate {rate_hz:+.4f} Hz ({rate_deg_s:+.1f} deg/s)",
-        ]
-        if raw_visibility is not None and stopped_visibility is not None:
-            raw_phase_deg = wrap_degrees(np.degrees(np.angle(raw_visibility)))
-            stopped_phase_deg = wrap_degrees(np.degrees(np.angle(stopped_visibility)))
-            lines.extend(
-                [
-                    f"Raw vis phase {raw_phase_deg:+.1f} deg",
-                    f"Stopped phase {stopped_phase_deg:+.1f} deg",
-                ]
-            )
-        else:
-            lines.append("Stopped phase --")
-        self.fringe_model_status.set("\n".join(lines))
+        self.fringe_model_status.set(
+            format_fringe_model_status(model, raw_visibility, stopped_visibility)
+        )
 
     def _target_mode_value(self) -> str:
         if not hasattr(self, "target_mode"):
@@ -1376,6 +1375,65 @@ def smooth_line(values: np.ndarray, bins: int) -> np.ndarray:
     width = min(int(bins), values.size)
     kernel = np.ones(width, dtype=np.float64) / width
     return np.convolve(values, kernel, mode="same")
+
+
+def format_visibility_status(continuum) -> str:
+    if continuum is None:
+        return "\n".join(
+            (
+                "Visibility: --",
+                "Re --, Im --",
+                "Amp --, Phase -- rad",
+                "SNR --",
+            )
+        )
+    return "\n".join(
+        (
+            "Visibility:",
+            f"Re {continuum.visibility.real:.4g}, Im {continuum.visibility.imag:.4g}",
+            f"Amp {continuum.amplitude:.4g}, Phase {continuum.phase_rad:.4f} rad",
+            f"SNR {continuum.snr:.2f}",
+        )
+    )
+
+
+def format_fringe_model_status(
+    model,
+    raw_visibility: complex | None,
+    stopped_visibility: complex | None,
+) -> str:
+    if model is None:
+        return "\n".join(
+            (
+                "Fringe model: --",
+                "Delay -- ns",
+                "Phase -- deg",
+                "Rate -- Hz (-- deg/s)",
+                "Raw vis phase -- deg",
+                "Stopped phase -- deg",
+            )
+        )
+
+    delay_ns = model.delay_s * 1_000_000_000.0
+    model_phase_deg = wrap_degrees(np.degrees(model.phase_rad))
+    rate_hz = model.phase_rate_rad_s / (2.0 * np.pi)
+    rate_deg_s = np.degrees(model.phase_rate_rad_s)
+    if raw_visibility is None or stopped_visibility is None:
+        raw_phase_text = "--"
+        stopped_phase_text = "--"
+    else:
+        raw_phase_text = f"{wrap_degrees(np.degrees(np.angle(raw_visibility))):+.1f}"
+        stopped_phase_text = f"{wrap_degrees(np.degrees(np.angle(stopped_visibility))):+.1f}"
+    return "\n".join(
+        (
+            f"Fringe model {model.when_utc.strftime('%H:%M:%S')} UTC",
+            f"Delay {delay_ns:+.2f} ns",
+            f"Phase {model_phase_deg:+.1f} deg",
+            f"Rate {rate_hz:+.4f} Hz ({rate_deg_s:+.1f} deg/s)",
+            f"Raw vis phase {raw_phase_text} deg",
+            f"Stopped phase {stopped_phase_text} deg",
+        )
+    )
 
 
 def fringe_reset_signature(
