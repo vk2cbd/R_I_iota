@@ -152,6 +152,7 @@ class InterferometryApp(tk.Tk):
         self._running = False
         self._latest_config: ObservationConfig | None = None
         self._latest_source_mode = "Simulator"
+        self._latest_fringe_reset_signature: tuple[object, ...] | None = None
         self._latest_backend_status: dict[str, object] = {}
         self._loading_settings = True
         self._settings = load_settings()
@@ -701,6 +702,11 @@ class InterferometryApp(tk.Tk):
 
         self._latest_config = config
         self._latest_source_mode = self.source_mode.get()
+        self._latest_fringe_reset_signature = fringe_reset_signature(
+            config,
+            self._target_mode_value(),
+            self._latest_source_mode,
+        )
         self._backend = backend
         self._latest_backend_status = {}
         self._last_draw_time = 0.0
@@ -1226,16 +1232,19 @@ class InterferometryApp(tk.Tk):
         if config == self._latest_config and source_mode == self._latest_source_mode:
             return True
 
-        model_changed = (
-            source_mode != self._latest_source_mode
-            or fringe_model_config_changed(self._latest_config, config)
+        reset_signature = fringe_reset_signature(
+            config,
+            self._target_mode_value(),
+            source_mode,
         )
+        model_changed = reset_signature != self._latest_fringe_reset_signature
         self._backend.update_config(config, source_mode)
         if model_changed:
             self._backend.reset_average()
             self._reset_fringe_history()
         self._latest_config = config
         self._latest_source_mode = source_mode
+        self._latest_fringe_reset_signature = reset_signature
         self._latest_backend_status = {}
         self._last_draw_time = 0.0
         reset_text = "; fringe history reset" if model_changed else ""
@@ -1369,18 +1378,24 @@ def smooth_line(values: np.ndarray, bins: int) -> np.ndarray:
     return np.convolve(values, kernel, mode="same")
 
 
-def fringe_model_config_changed(old: ObservationConfig, new: ObservationConfig) -> bool:
-    fields = (
-        "observing_frequency_mhz",
-        "ra_deg",
-        "dec_deg",
-        "observer_lat_deg",
-        "observer_lon_deg",
-        "baseline_east_m",
-        "baseline_north_m",
-        "baseline_up_m",
+def fringe_reset_signature(
+    config: ObservationConfig,
+    target_mode: str,
+    source_mode: str,
+) -> tuple[object, ...]:
+    signature = (
+        source_mode,
+        target_mode,
+        config.observing_frequency_mhz,
+        config.observer_lat_deg,
+        config.observer_lon_deg,
+        config.baseline_east_m,
+        config.baseline_north_m,
+        config.baseline_up_m,
     )
-    return any(getattr(old, field) != getattr(new, field) for field in fields)
+    if target_mode == MANUAL_TARGET_SOURCE:
+        signature += (config.ra_deg, config.dec_deg)
+    return signature
 
 
 def autoscale_positive_axis(axis, values: np.ndarray) -> None:

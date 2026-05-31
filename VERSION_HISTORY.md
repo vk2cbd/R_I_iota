@@ -1,5 +1,12 @@
 # Version History
 
+## 0.4.6-theta - Moon Tracking Averaging Fix
+
+- Stopped automatic Moon ephemeris drift from repeatedly resetting backend
+  averaging and the fringe display history.
+- Target changes still reset averaging once, but continuous Sun/Moon coordinate
+  tracking now updates the model without restarting the smoothing cycle.
+
 ## 0.4.5-theta - Fringe Model Readout Layout
 
 - Moved the raw/stopped phase legend to the left side of the stopped-fringe

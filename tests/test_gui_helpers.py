@@ -2,7 +2,7 @@ import pytest
 
 from radio_interferometer.gui import (
     format_ra_hours,
-    fringe_model_config_changed,
+    fringe_reset_signature,
     parse_ra_hours_text,
 )
 from radio_interferometer.sources import ObservationConfig
@@ -22,12 +22,37 @@ def test_parse_ra_hours_rejects_degree_like_value() -> None:
         parse_ra_hours_text("67.9186")
 
 
-def test_fringe_model_config_changed_detects_target_change() -> None:
+def test_fringe_reset_signature_detects_manual_target_change() -> None:
     base = make_config()
 
-    assert fringe_model_config_changed(base, make_config(ra_deg=242.38))
-    assert fringe_model_config_changed(base, make_config(dec_deg=-25.40))
-    assert not fringe_model_config_changed(base, make_config(bins=1024))
+    assert fringe_reset_signature(base, "Manual RA/DEC", "B210 / SoapySDR") != (
+        fringe_reset_signature(make_config(ra_deg=242.38), "Manual RA/DEC", "B210 / SoapySDR")
+    )
+    assert fringe_reset_signature(base, "Manual RA/DEC", "B210 / SoapySDR") != (
+        fringe_reset_signature(make_config(dec_deg=-25.40), "Manual RA/DEC", "B210 / SoapySDR")
+    )
+    assert fringe_reset_signature(base, "Manual RA/DEC", "B210 / SoapySDR") == (
+        fringe_reset_signature(make_config(bins=1024), "Manual RA/DEC", "B210 / SoapySDR")
+    )
+
+
+def test_fringe_reset_signature_ignores_automatic_moon_ephemeris_drift() -> None:
+    base = make_config(ra_deg=242.38, dec_deg=-25.40)
+    drifted = make_config(ra_deg=242.39, dec_deg=-25.41)
+
+    assert fringe_reset_signature(base, "Moon", "B210 / SoapySDR") == (
+        fringe_reset_signature(drifted, "Moon", "B210 / SoapySDR")
+    )
+    assert fringe_reset_signature(base, "Moon", "B210 / SoapySDR") != (
+        fringe_reset_signature(drifted, "Manual RA/DEC", "B210 / SoapySDR")
+    )
+    assert fringe_reset_signature(base, "Moon", "B210 / SoapySDR") != (
+        fringe_reset_signature(
+            make_config(observer_lat_deg=-32.0),
+            "Moon",
+            "B210 / SoapySDR",
+        )
+    )
 
 
 def make_config(**overrides) -> ObservationConfig:
