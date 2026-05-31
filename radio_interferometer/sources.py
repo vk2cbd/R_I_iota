@@ -124,8 +124,8 @@ class SimulatedInterferometerSource(SampleSource):
 
         delay_s = geometric_delay_seconds(self.config)
         phase = 2.0 * np.pi * self.config.observing_frequency_hz * delay_s
-        antenna_a = source
-        antenna_b = source * np.exp(-1j * phase)
+        antenna_a = source * np.exp(-1j * phase)
+        antenna_b = source
 
         noise_scale = 0.45
         noise_a = noise_scale * (

@@ -827,7 +827,7 @@ class InterferometryApp(tk.Tk):
                 continuum_text = f"Continuum SNR: {continuum_error}"
 
         if continuum is not None:
-            stopped_visibility = continuum.visibility * np.exp(-1j * model.phase_rad)
+            stopped_visibility = apply_display_fringe_stop(continuum.visibility, model)
             self.visibility_status.set(format_visibility_status(continuum))
             self._set_fringe_model_status(model, continuum.visibility, stopped_visibility)
             self._append_fringe_sample(continuum.visibility, stopped_visibility)
@@ -1391,6 +1391,12 @@ def format_fixed_lines(lines: tuple[str, ...], line_count: int) -> str:
 
 def format_status_text(*lines: str) -> str:
     return format_fixed_lines(lines, STATUS_LINE_COUNT)
+
+
+def apply_display_fringe_stop(visibility: complex, model) -> complex:
+    """Remove geometric phase from an East * conj(West) visibility."""
+
+    return visibility * np.exp(1j * model.phase_rad)
 
 
 def format_runtime_status_text(averaging_status: str, status: dict[str, object]) -> str:

@@ -1,9 +1,11 @@
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 from radio_interferometer.gui import (
+    apply_display_fringe_stop,
     format_ra_hours,
     format_fringe_model_status,
     format_runtime_status_text,
@@ -65,6 +67,15 @@ def test_readout_formatters_keep_stable_line_counts() -> None:
     )
     assert len(format_visibility_status(continuum).splitlines()) == 4
     assert len(format_fringe_model_status(model, continuum.visibility, 1.0j).splitlines()) == 6
+
+
+def test_display_fringe_stop_uses_east_conj_west_sign() -> None:
+    model = SimpleNamespace(phase_rad=0.75)
+    raw_visibility = np.exp(-1j * model.phase_rad)
+
+    stopped = apply_display_fringe_stop(raw_visibility, model)
+
+    assert np.angle(stopped) == pytest.approx(0.0, abs=1e-12)
 
 
 def test_fringe_reset_signature_detects_manual_target_change() -> None:

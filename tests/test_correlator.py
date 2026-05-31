@@ -96,3 +96,23 @@ def test_estimate_broadband_continuum_snr_uses_selected_bins() -> None:
     assert result.bins_used == 52
     assert result.amplitude > 0.9
     assert result.snr > 10.0
+
+
+def test_broadband_visibility_keeps_east_conj_west_phase_sign() -> None:
+    bins = 128
+    sample_rate_hz = 1_000_000.0
+    observing_frequency_hz = 4_801_234_567.0
+    delay_s = 3.25 / sample_rate_hz
+    offsets = np.fft.fftshift(np.fft.fftfreq(bins, d=1.0 / sample_rate_hz))
+    model_phase = 2.0 * np.pi * observing_frequency_hz * delay_s
+    cross = np.exp(-1j * (model_phase + 2.0 * np.pi * offsets * delay_s))
+
+    result = estimate_broadband_continuum_snr(
+        cross,
+        offsets,
+        lag_bin=delay_s * sample_rate_hz,
+        sample_rate_hz=sample_rate_hz,
+        edge_percent=0.0,
+    )
+
+    assert abs(np.angle(result.visibility * np.exp(1j * model_phase))) < 1e-12

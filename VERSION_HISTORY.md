@@ -1,5 +1,14 @@
 # Version History
 
+## 0.4.9-theta - Fringe Stop Sign Correction
+
+- Corrected the display fringe-stopping sign for the `East * conj(West)`
+  visibility convention used by the FX correlator.
+- Updated the simulator phase convention to match the East/West channel labels
+  and positive baseline direction.
+- Added regression tests for broadband visibility phase sign and the display
+  fringe-stop correction.
+
 ## 0.4.8-theta - Wrapped Stable Readouts
 
 - Restored natural sizing for the always-visible readout panel so it no
