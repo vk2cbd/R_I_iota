@@ -1,5 +1,13 @@
 # Version History
 
+## 0.4.11-theta - Stopped Phase Rate Readout
+
+- Added a live stopped-fringe phase-rate readout in degrees/second to the
+  stopped-phase plot legend.
+- The rate is calculated from the unwrapped stopped phase across the currently
+  displayed time span.
+- Added tests for the stopped-phase rate estimator and plot-label formatting.
+
 ## 0.4.10-theta - Full Precision Solar-System Targets
 
 - Kept full-precision Sun/Moon coordinates for the runtime configuration and

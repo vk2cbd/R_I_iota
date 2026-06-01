@@ -7,10 +7,12 @@ import pytest
 from radio_interferometer.gui import (
     apply_display_fringe_stop,
     apply_target_display_rounding,
+    estimate_phase_rate_deg_s,
     format_ra_hours,
     format_fringe_model_status,
     format_runtime_status_text,
     format_status_text,
+    format_stopped_phase_label,
     format_visibility_status,
     fringe_reset_signature,
     parse_ra_hours_text,
@@ -79,6 +81,18 @@ def test_display_fringe_stop_uses_east_conj_west_sign() -> None:
     stopped = apply_display_fringe_stop(raw_visibility, model)
 
     assert np.angle(stopped) == pytest.approx(0.0, abs=1e-12)
+
+
+def test_stopped_phase_rate_estimator_handles_unwrapped_ramp() -> None:
+    times = np.linspace(0.0, 120.0, 25)
+    phase_deg = -170.0 + 0.15 * times
+    wrapped_phase_rad = np.radians(((phase_deg + 180.0) % 360.0) - 180.0)
+
+    rate = estimate_phase_rate_deg_s(times, wrapped_phase_rad)
+
+    assert rate == pytest.approx(0.15, abs=1e-12)
+    assert format_stopped_phase_label(rate) == "Stopped phase (+0.150 deg/s)"
+    assert format_stopped_phase_label(None) == "Stopped phase (-- deg/s)"
 
 
 def test_automatic_target_coordinates_keep_full_precision_for_config() -> None:

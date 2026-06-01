@@ -509,9 +509,13 @@ class InterferometryApp(tk.Tk):
             [], [], color="#9467bd", lw=1.1, label="Raw phase"
         )
         (self.fringe_stopped_phase_line,) = self.ax_fringe_phase.plot(
-            [], [], color="#2ca02c", lw=1.1, label="Stopped phase"
+            [],
+            [],
+            color="#2ca02c",
+            lw=1.1,
+            label=format_stopped_phase_label(None),
         )
-        self.ax_fringe_phase.legend(loc="upper left", framealpha=0.8)
+        self.fringe_phase_legend = self.ax_fringe_phase.legend(loc="upper left", framealpha=0.8)
         self.fringe_time_slider = Slider(
             self.ax_fringe_time_slider,
             "Time span (min)",
@@ -955,6 +959,7 @@ class InterferometryApp(tk.Tk):
             self.fringe_q_line.set_data([], [])
             self.fringe_raw_phase_line.set_data([], [])
             self.fringe_stopped_phase_line.set_data([], [])
+            self._update_stopped_phase_label(None)
             self.ax_fringe_time.set_xlim(0.0, window_seconds)
             self.ax_fringe_phase.set_xlim(0.0, window_seconds)
             self.ax_fringe_phase.set_ylim(-180.0, 180.0)
@@ -983,6 +988,11 @@ class InterferometryApp(tk.Tk):
         display_q = q_values[visible]
         display_raw_phase = np.degrees(np.unwrap(raw_phase_values[visible]))
         display_stopped_phase = np.degrees(np.unwrap(stopped_phase_values[visible]))
+        stopped_phase_rate = estimate_phase_rate_deg_s(
+            display_times,
+            stopped_phase_values[visible],
+        )
+        self._update_stopped_phase_label(stopped_phase_rate)
         if display_times.size > FRINGE_DISPLAY_MAX_POINTS:
             step = int(np.ceil(display_times.size / FRINGE_DISPLAY_MAX_POINTS))
             display_times = display_times[::step]
@@ -1005,6 +1015,10 @@ class InterferometryApp(tk.Tk):
         autoscale_phase_axis(self.ax_fringe_phase, phase_values)
         if draw:
             self.canvas.draw_idle()
+
+    def _update_stopped_phase_label(self, rate_deg_s: float | None) -> None:
+        self.fringe_stopped_phase_line.set_label(format_stopped_phase_label(rate_deg_s))
+        self.fringe_phase_legend = self.ax_fringe_phase.legend(loc="upper left", framealpha=0.8)
 
     def _set_fringe_model_status(
         self,
@@ -1406,6 +1420,37 @@ def apply_display_fringe_stop(visibility: complex, model) -> complex:
     """Remove geometric phase from an East * conj(West) visibility."""
 
     return visibility * np.exp(1j * model.phase_rad)
+
+
+def estimate_phase_rate_deg_s(times_s: np.ndarray, phase_rad: np.ndarray) -> float | None:
+    times = np.asarray(times_s, dtype=np.float64)
+    phases = np.asarray(phase_rad, dtype=np.float64)
+    if times.size < 2 or phases.size < 2 or times.shape != phases.shape:
+        return None
+
+    duration_s = float(times[-1] - times[0])
+    if not np.isfinite(duration_s) or duration_s <= 0.0:
+        return None
+
+    phase_deg = np.degrees(np.unwrap(phases))
+    valid = np.isfinite(times) & np.isfinite(phase_deg)
+    if np.count_nonzero(valid) < 2:
+        return None
+
+    valid_times = times[valid]
+    valid_phase_deg = phase_deg[valid]
+    centered_times = valid_times - float(np.mean(valid_times))
+    denominator = float(np.dot(centered_times, centered_times))
+    if denominator <= 0.0:
+        return None
+    centered_phase = valid_phase_deg - float(np.mean(valid_phase_deg))
+    return float(np.dot(centered_times, centered_phase) / denominator)
+
+
+def format_stopped_phase_label(rate_deg_s: float | None) -> str:
+    if rate_deg_s is None or not np.isfinite(rate_deg_s):
+        return "Stopped phase (-- deg/s)"
+    return f"Stopped phase ({rate_deg_s:+.3f} deg/s)"
 
 
 def resolve_automatic_target_coordinates(
