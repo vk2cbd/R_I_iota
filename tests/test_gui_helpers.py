@@ -71,7 +71,14 @@ def test_readout_formatters_keep_stable_line_counts() -> None:
         phase_rate_rad_s=0.01,
     )
     assert len(format_visibility_status(continuum).splitlines()) == 4
-    assert len(format_fringe_model_status(model, continuum.visibility, 1.0j).splitlines()) == 6
+    fringe_lines = format_fringe_model_status(
+        model,
+        continuum.visibility,
+        1.0j,
+        0.15,
+    ).splitlines()
+    assert len(fringe_lines) == 6
+    assert fringe_lines[-1] == "Stopped phase +90.0 deg, rate +0.150 deg/s"
 
 
 def test_display_fringe_stop_uses_east_conj_west_sign() -> None:

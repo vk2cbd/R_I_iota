@@ -26,6 +26,7 @@ class CorrelatorResult:
 
     frequency_offsets_hz: np.ndarray
     cross_spectrum: np.ndarray
+    raw_cross_spectrum: np.ndarray
     interferogram: np.ndarray
     east_auto_spectrum: np.ndarray
     west_auto_spectrum: np.ndarray
@@ -73,16 +74,22 @@ class FXCorrelator:
         self._window = np.hanning(config.bins).astype(np.float64)
         self._window_power = np.sum(self._window**2)
         self._integrated_cross: np.ndarray | None = None
+        self._integrated_raw_cross: np.ndarray | None = None
         self._integrated_east_auto: np.ndarray | None = None
         self._integrated_west_auto: np.ndarray | None = None
+        self.frequency_offsets_unshifted_hz = np.fft.fftfreq(
+            config.bins,
+            d=1.0 / config.sample_rate_hz,
+        )
         self.frequency_offsets_hz = np.fft.fftshift(
-            np.fft.fftfreq(config.bins, d=1.0 / config.sample_rate_hz)
+            self.frequency_offsets_unshifted_hz
         )
         self.lag_bins = np.arange(-config.bins // 2, config.bins // 2)
         self._processed_blocks = 0
 
     def reset(self) -> None:
         self._integrated_cross = None
+        self._integrated_raw_cross = None
         self._integrated_east_auto = None
         self._integrated_west_auto = None
         self._processed_blocks = 0
@@ -91,7 +98,12 @@ class FXCorrelator:
     def averaging_fill_fraction(self) -> float:
         return min(1.0, self._processed_blocks / self.config.averaging_blocks)
 
-    def process(self, antenna_a: np.ndarray, antenna_b: np.ndarray) -> CorrelatorResult:
+    def process(
+        self,
+        antenna_a: np.ndarray,
+        antenna_b: np.ndarray,
+        cross_correction: np.ndarray | None = None,
+    ) -> CorrelatorResult:
         """Correlate two complex sample blocks and return integrated products."""
 
         count = self.config.bins
@@ -100,17 +112,27 @@ class FXCorrelator:
 
         spectrum_a = np.fft.fft(a * self._window)
         spectrum_b = np.fft.fft(b * self._window)
-        cross = spectrum_a * np.conj(spectrum_b) / self._window_power
+        raw_cross = spectrum_a * np.conj(spectrum_b) / self._window_power
+        cross = raw_cross
+        if cross_correction is not None:
+            correction = np.asarray(cross_correction, dtype=np.complex128)
+            if correction.shape != raw_cross.shape:
+                raise ValueError("Fringe-stop correction must match the FFT bin count.")
+            cross = raw_cross * correction
         east_auto = np.abs(spectrum_a) ** 2 / self._window_power
         west_auto = np.abs(spectrum_b) ** 2 / self._window_power
 
         if self._integrated_cross is None:
             self._integrated_cross = cross
+            self._integrated_raw_cross = raw_cross
             self._integrated_east_auto = east_auto
             self._integrated_west_auto = west_auto
         else:
             alpha = self.config.integration_alpha
             self._integrated_cross = (1.0 - alpha) * self._integrated_cross + alpha * cross
+            self._integrated_raw_cross = (
+                (1.0 - alpha) * self._integrated_raw_cross + alpha * raw_cross
+            )
             self._integrated_east_auto = (
                 (1.0 - alpha) * self._integrated_east_auto + alpha * east_auto
             )
@@ -120,6 +142,7 @@ class FXCorrelator:
         self._processed_blocks += 1
 
         shifted_cross = np.fft.fftshift(self._integrated_cross)
+        shifted_raw_cross = np.fft.fftshift(self._integrated_raw_cross)
         shifted_east_auto = np.fft.fftshift(self._integrated_east_auto)
         shifted_west_auto = np.fft.fftshift(self._integrated_west_auto)
         interferogram = np.fft.fftshift(np.fft.ifft(self._integrated_cross))
@@ -129,6 +152,7 @@ class FXCorrelator:
         return CorrelatorResult(
             frequency_offsets_hz=self.frequency_offsets_hz.copy(),
             cross_spectrum=shifted_cross.copy(),
+            raw_cross_spectrum=shifted_raw_cross.copy(),
             interferogram=interferogram,
             east_auto_spectrum=shifted_east_auto.copy(),
             west_auto_spectrum=shifted_west_auto.copy(),

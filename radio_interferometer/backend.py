@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from math import ceil
 from multiprocessing import Event, Process, Queue, get_context
 from queue import Empty, Full
@@ -14,8 +15,10 @@ from .sources import (
     B210ReadOverflow,
     B210SoapySource,
     ObservationConfig,
+    SampleBlock,
     SampleSource,
     SimulatedInterferometerSource,
+    fringe_stop_correction,
 )
 
 BACKEND_RESULT_INTERVAL_S = 0.08
@@ -132,15 +135,18 @@ def backend_worker(
         source = make_source(config, source_mode)
         correlator = make_correlator(config)
         source.start()
+        stream_start_utc = datetime.now(timezone.utc)
 
         while not stop_event.is_set():
-            config, source_mode, source, correlator = apply_pending_commands(
+            config, source_mode, source, correlator, source_restarted = apply_pending_commands(
                 command_queue,
                 config,
                 source_mode,
                 source,
                 correlator,
             )
+            if source_restarted:
+                stream_start_utc = datetime.now(timezone.utc)
 
             result: CorrelatorResult | None = None
             blocks_this_cycle = calculate_blocks_per_cycle(config, source_mode)
@@ -148,11 +154,24 @@ def backend_worker(
                 if stop_event.is_set():
                     break
                 try:
-                    antenna_a, antenna_b = source.read(correlator.config.bins)
+                    block = source.read(correlator.config.bins)
                 except B210ReadOverflow:
                     overflow_count += 1
                     continue
-                result = correlator.process(antenna_a, antenna_b)
+                block_time = block_midpoint_time_utc(
+                    stream_start_utc,
+                    block,
+                    correlator.config.bins,
+                    config.sample_rate_hz,
+                )
+                correction = None
+                if config.fringe_stop_mode == "Backend":
+                    correction = fringe_stop_correction(
+                        config,
+                        correlator.frequency_offsets_unshifted_hz,
+                        block_time,
+                    )
+                result = correlator.process(block.antenna_a, block.antenna_b, correction)
                 processed_count += 1
 
             now = monotonic()
@@ -194,7 +213,8 @@ def apply_pending_commands(
     source_mode: str,
     source: SampleSource,
     correlator: FXCorrelator,
-) -> tuple[ObservationConfig, str, SampleSource, FXCorrelator]:
+) -> tuple[ObservationConfig, str, SampleSource, FXCorrelator, bool]:
+    source_restarted = False
     while True:
         try:
             command = command_queue.get_nowait()
@@ -218,6 +238,7 @@ def apply_pending_commands(
             source.stop()
             source = make_source(new_config, new_source_mode)
             source.start()
+            source_restarted = True
         else:
             source.update_config(new_config)
 
@@ -226,7 +247,7 @@ def apply_pending_commands(
         config = new_config
         source_mode = new_source_mode
 
-    return config, source_mode, source, correlator
+    return config, source_mode, source, correlator, source_restarted
 
 
 class StopBackend(Exception):
@@ -249,6 +270,16 @@ def make_correlator(config: ObservationConfig) -> FXCorrelator:
     )
 
 
+def block_midpoint_time_utc(
+    stream_start_utc: datetime,
+    block: SampleBlock,
+    bins: int,
+    sample_rate_hz: float,
+) -> datetime:
+    midpoint_sample = block.sample_index + bins / 2.0
+    return stream_start_utc + timedelta(seconds=midpoint_sample / sample_rate_hz)
+
+
 def calculate_blocks_per_cycle(config: ObservationConfig, source_mode: str) -> int:
     if source_mode != "B210 / SoapySDR":
         return 1
@@ -265,6 +296,7 @@ def build_status(
     dropped_results: int,
 ) -> dict[str, Any]:
     status = source.status_snapshot()
+    source_config = getattr(source, "config", None)
     status.update(
         {
             "processed": processed_count,
@@ -274,6 +306,8 @@ def build_status(
             "active_bins": correlator.config.bins,
             "active_averaging_blocks": correlator.config.averaging_blocks,
             "active_bandwidth_mhz": correlator.config.sample_rate_hz / 1_000_000.0,
+            "active_fringe_stop_mode": getattr(source_config, "fringe_stop_mode", "--"),
+            "active_frequency_sideband": getattr(source_config, "frequency_sideband", "--"),
         }
     )
     return status
@@ -298,6 +332,8 @@ def requires_correlator_rebuild(old: ObservationConfig, new: ObservationConfig) 
         old.bandwidth_mhz != new.bandwidth_mhz
         or old.bins != new.bins
         or old.averaging_blocks != new.averaging_blocks
+        or old.fringe_stop_mode != new.fringe_stop_mode
+        or old.frequency_sideband != new.frequency_sideband
     )
 
 

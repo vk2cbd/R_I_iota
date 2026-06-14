@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from radio_interferometer.correlator import (
     CorrelatorConfig,
@@ -7,6 +8,7 @@ from radio_interferometer.correlator import (
     estimate_broadband_continuum_snr,
     estimate_peak_snr,
 )
+from radio_interferometer.sources import ObservationConfig, fringe_stop_phasor, sky_frequencies_hz
 
 
 def test_fx_correlator_returns_requested_bin_count() -> None:
@@ -18,6 +20,7 @@ def test_fx_correlator_returns_requested_bin_count() -> None:
     result = correlator.process(signal, signal)
 
     assert result.cross_spectrum.shape == (bins,)
+    assert result.raw_cross_spectrum.shape == (bins,)
     assert result.interferogram.shape == (bins,)
     assert result.east_auto_spectrum.shape == (bins,)
     assert result.west_auto_spectrum.shape == (bins,)
@@ -116,3 +119,65 @@ def test_broadband_visibility_keeps_east_conj_west_phase_sign() -> None:
     )
 
     assert abs(np.angle(result.visibility * np.exp(1j * model_phase))) < 1e-12
+
+
+def test_sky_frequencies_respect_lnb_sideband() -> None:
+    offsets = np.array([-1_000.0, 0.0, 1_000.0])
+    low_side = make_config(frequency_sideband="LO - IF")
+    high_side = make_config(frequency_sideband="LO + IF")
+
+    assert np.allclose(
+        sky_frequencies_hz(low_side, offsets),
+        low_side.observing_frequency_hz - offsets,
+    )
+    assert np.allclose(
+        sky_frequencies_hz(high_side, offsets),
+        high_side.observing_frequency_hz + offsets,
+    )
+
+
+def test_fringe_stop_phasor_removes_east_conj_west_band_phase() -> None:
+    bins = 128
+    sample_rate_hz = 1_000_000.0
+    delay_s = 3.25 / sample_rate_hz
+    config = make_config(
+        bandwidth_mhz=sample_rate_hz / 1_000_000.0,
+        frequency_sideband="LO - IF",
+    )
+    offsets = np.fft.fftfreq(bins, d=1.0 / sample_rate_hz)
+    sky_freqs = sky_frequencies_hz(config, offsets)
+    raw_cross = np.exp(-2j * np.pi * sky_freqs * delay_s)
+
+    corrected = raw_cross * fringe_stop_phasor(config, offsets, delay_s)
+
+    assert np.max(np.abs(corrected - 1.0)) < 1e-12
+
+
+def test_fx_correlator_applies_cross_correction_before_averaging() -> None:
+    bins = 64
+    correlator = FXCorrelator(CorrelatorConfig(sample_rate_hz=1_000_000.0, bins=bins))
+    signal = np.ones(bins, dtype=np.complex64)
+    correction = np.full(bins, 1j, dtype=np.complex128)
+
+    result = correlator.process(signal, signal, cross_correction=correction)
+
+    peak = int(np.argmax(np.abs(result.raw_cross_spectrum)))
+    assert np.angle(result.cross_spectrum[peak] / result.raw_cross_spectrum[peak]) == (
+        pytest.approx(np.pi / 2.0)
+    )
+
+
+def make_config(**overrides) -> ObservationConfig:
+    values = {
+        "observing_frequency_mhz": 4800.0,
+        "intermediate_frequency_mhz": 1150.0,
+        "ra_deg": 83.6331,
+        "dec_deg": 22.0145,
+        "observer_lat_deg": -33.8688,
+        "observer_lon_deg": 151.2093,
+        "bandwidth_mhz": 30.72,
+        "bins": 2048,
+        "averaging_blocks": 8196,
+    }
+    values.update(overrides)
+    return ObservationConfig(**values)

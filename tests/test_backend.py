@@ -33,6 +33,8 @@ def test_fx_bins_and_smoothing_rebuild_correlator() -> None:
 
     assert requires_correlator_rebuild(config, make_config(bins=1024))
     assert requires_correlator_rebuild(config, make_config(averaging_blocks=128))
+    assert requires_correlator_rebuild(config, make_config(fringe_stop_mode="Backend"))
+    assert requires_correlator_rebuild(config, make_config(frequency_sideband="LO + IF"))
 
 
 def test_b210_fx_bins_restart_source() -> None:

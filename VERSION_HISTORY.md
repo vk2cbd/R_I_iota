@@ -1,5 +1,25 @@
 # Version History
 
+## 0.5.0-iota - Backend Fringe Stopping
+
+- Added a new Iota app line with backend fringe stopping enabled by default.
+- Added GUI controls for fringe stopping mode: Off, Display, or Backend.
+- Added an RF sideband control so the per-bin sky-frequency mapping can use
+  either LO - IF or LO + IF.
+- Applied the geometric fringe-stopping phasor across every FFT bin before
+  cross-spectrum averaging when Backend mode is selected.
+- Preserved the integrated raw cross spectrum as a diagnostic so the phase
+  panel can still compare raw and stopped phase behaviour.
+- Added stream-relative sample indexing to source blocks so correction timing
+  uses the block midpoint rather than GUI draw time.
+
+## 0.4.12-theta - Stopped Phase Panel Rate
+
+- Added the stopped-fringe phase-rate value to the left GUI fringe-model
+  readout on the same line as the stopped phase value.
+- Kept the stopped-phase plot legend rate readout in place.
+- The panel rate follows the currently displayed stopped-phase time span.
+
 ## 0.4.11-theta - Stopped Phase Rate Readout
 
 - Added a live stopped-fringe phase-rate readout in degrees/second to the

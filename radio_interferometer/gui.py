@@ -24,13 +24,15 @@ from .correlator import (
     estimate_broadband_continuum_snr,
     estimate_peak_snr,
 )
-from .sources import ObservationConfig, fringe_model, target_coordinates
+from .sources import ObservationConfig, fringe_model, sky_frequencies_hz, target_coordinates
 
 GUI_REFRESH_MS = 80
 AVERAGING_DRAW_REFRESH_MS = 500
-SETTINGS_PATH = Path.home() / ".radio_interferometer_theta_settings.json"
+SETTINGS_PATH = Path.home() / ".radio_interferometer_iota_settings.json"
 TARGET_SOURCE_OPTIONS = ("Manual RA/DEC", "Sun", "Moon")
 MANUAL_TARGET_SOURCE = TARGET_SOURCE_OPTIONS[0]
+FRINGE_STOP_OPTIONS = ("Off", "Display", "Backend")
+FREQUENCY_SIDEBAND_OPTIONS = ("LO - IF", "LO + IF")
 PLOT_CONTROL_WIDTH = 0.055
 PLOT_CONTROL_HEIGHT = 0.026
 PLOT_CONTROL_GAP = 0.006
@@ -109,6 +111,8 @@ VISIBILITY_CSV_FIELDS = [
     "source_dec_deg",
     "observer_lat_deg",
     "observer_lon_deg",
+    "fringe_stop_mode",
+    "frequency_sideband",
     "lag_bin",
     "visibility_real",
     "visibility_imag",
@@ -123,6 +127,8 @@ VISIBILITY_CSV_FIELDS = [
 DEFAULT_SETTINGS = {
     "source_mode": "Simulator",
     "target_mode": MANUAL_TARGET_SOURCE,
+    "fringe_stop_mode": "Backend",
+    "frequency_sideband": "LO - IF",
     "spectrum_plot_mode": "on",
     "phase_plot_mode": "off",
     "interferogram_autoscale": "on",
@@ -186,6 +192,10 @@ class InterferometryApp(tk.Tk):
         self._fringe_q_history: deque[float] = deque()
         self._fringe_raw_phase_history: deque[float] = deque()
         self._fringe_stopped_phase_history: deque[float] = deque()
+        self._latest_fringe_model = None
+        self._latest_raw_visibility: complex | None = None
+        self._latest_stopped_visibility: complex | None = None
+        self._latest_stopped_phase_rate_deg_s: float | None = None
         self._fringe_time_window_minutes = parse_fringe_window_minutes(
             self._settings["fringe_time_window_minutes"]
         )
@@ -245,11 +255,31 @@ class InterferometryApp(tk.Tk):
             width=18,
         ).grid(row=1, column=1, sticky="ew", pady=3)
 
+        self.fringe_stop_mode = tk.StringVar(value=self._settings["fringe_stop_mode"])
+        ttk.Label(panel, text="Fringe stop").grid(row=2, column=0, sticky="w", pady=3)
+        ttk.Combobox(
+            panel,
+            textvariable=self.fringe_stop_mode,
+            values=FRINGE_STOP_OPTIONS,
+            state="readonly",
+            width=18,
+        ).grid(row=2, column=1, sticky="ew", pady=3)
+
+        self.frequency_sideband = tk.StringVar(value=self._settings["frequency_sideband"])
+        ttk.Label(panel, text="RF sideband").grid(row=3, column=0, sticky="w", pady=3)
+        ttk.Combobox(
+            panel,
+            textvariable=self.frequency_sideband,
+            values=FREQUENCY_SIDEBAND_OPTIONS,
+            state="readonly",
+            width=18,
+        ).grid(row=3, column=1, sticky="ew", pady=3)
+
         self.spectrum_plot_mode = tk.StringVar(value=self._settings["spectrum_plot_mode"])
         self.phase_plot_mode = tk.StringVar(value=self._settings["phase_plot_mode"])
-        ttk.Label(panel, text="Spectrum plot").grid(row=2, column=0, sticky="w", pady=3)
+        ttk.Label(panel, text="Spectrum plot").grid(row=4, column=0, sticky="w", pady=3)
         spectrum_options = ttk.Frame(panel)
-        spectrum_options.grid(row=2, column=1, sticky="w", pady=3)
+        spectrum_options.grid(row=4, column=1, sticky="w", pady=3)
         ttk.Radiobutton(
             spectrum_options,
             text="On",
@@ -265,9 +295,9 @@ class InterferometryApp(tk.Tk):
             command=self._apply_plot_visibility,
         ).pack(side=tk.LEFT, padx=(8, 0))
 
-        ttk.Label(panel, text="Phase plot").grid(row=3, column=0, sticky="w", pady=3)
+        ttk.Label(panel, text="Phase plot").grid(row=5, column=0, sticky="w", pady=3)
         phase_options = ttk.Frame(panel)
-        phase_options.grid(row=3, column=1, sticky="w", pady=3)
+        phase_options.grid(row=5, column=1, sticky="w", pady=3)
         ttk.Radiobutton(
             phase_options,
             text="On",
@@ -300,9 +330,9 @@ class InterferometryApp(tk.Tk):
         self.fringe_iq_autoscale = tk.StringVar(value=self._settings["fringe_iq_autoscale"])
 
         self.continuum_snr_mode = tk.StringVar(value=self._settings["continuum_snr_mode"])
-        ttk.Label(panel, text="Continuum SNR").grid(row=4, column=0, sticky="w", pady=3)
+        ttk.Label(panel, text="Continuum SNR").grid(row=6, column=0, sticky="w", pady=3)
         continuum_options = ttk.Frame(panel)
-        continuum_options.grid(row=4, column=1, sticky="w", pady=3)
+        continuum_options.grid(row=6, column=1, sticky="w", pady=3)
         ttk.Radiobutton(
             continuum_options,
             text="On",
@@ -317,9 +347,9 @@ class InterferometryApp(tk.Tk):
         ).pack(side=tk.LEFT, padx=(8, 0))
 
         self.record_visibility_mode = tk.StringVar(value=self._settings["record_visibility_mode"])
-        ttk.Label(panel, text="Record visibilities").grid(row=5, column=0, sticky="w", pady=3)
+        ttk.Label(panel, text="Record visibilities").grid(row=7, column=0, sticky="w", pady=3)
         record_options = ttk.Frame(panel)
-        record_options.grid(row=5, column=1, sticky="w", pady=3)
+        record_options.grid(row=7, column=1, sticky="w", pady=3)
         ttk.Radiobutton(
             record_options,
             text="On",
@@ -334,13 +364,13 @@ class InterferometryApp(tk.Tk):
         ).pack(side=tk.LEFT, padx=(8, 0))
 
         self.start_button = ttk.Button(panel, text="Start", command=self.start)
-        self.start_button.grid(row=6, column=0, sticky="ew", pady=(10, 3))
+        self.start_button.grid(row=8, column=0, sticky="ew", pady=(10, 3))
         self.stop_button = ttk.Button(panel, text="Stop", command=self.stop, state=tk.DISABLED)
-        self.stop_button.grid(row=6, column=1, sticky="ew", pady=(10, 3))
+        self.stop_button.grid(row=8, column=1, sticky="ew", pady=(10, 3))
 
         self.inputs: dict[str, tk.StringVar] = {}
         self.input_entries: dict[str, ttk.Entry] = {}
-        for row, (key, label, default) in enumerate(FIELD_DEFAULTS, start=7):
+        for row, (key, label, default) in enumerate(FIELD_DEFAULTS, start=9):
             ttk.Label(panel, text=label).grid(row=row, column=0, sticky="w", pady=3)
             value = tk.StringVar(value=self._settings.get(key, default))
             self.inputs[key] = value
@@ -352,7 +382,7 @@ class InterferometryApp(tk.Tk):
             if key != "observing_frequency_mhz":
                 self._bind_commit_entry(entry)
 
-        continuum_row = len(FIELD_DEFAULTS) + 7
+        continuum_row = len(FIELD_DEFAULTS) + 9
         self.continuum_inputs: dict[str, tk.StringVar] = {}
         for row, (key, label, default) in enumerate(CONTINUUM_FIELD_DEFAULTS, start=continuum_row):
             ttk.Label(panel, text=label).grid(row=row, column=0, sticky="w", pady=3)
@@ -406,6 +436,8 @@ class InterferometryApp(tk.Tk):
 
         self._watch_control(self.source_mode)
         self._watch_control(self.target_mode)
+        self._watch_control(self.fringe_stop_mode)
+        self._watch_control(self.frequency_sideband)
         self._watch_control(self.spectrum_plot_mode)
         self._watch_control(self.phase_plot_mode)
         self._watch_control(self.interferogram_autoscale)
@@ -763,7 +795,7 @@ class InterferometryApp(tk.Tk):
         self._backend = None
         self.start_button.configure(state=tk.NORMAL)
         self.stop_button.configure(state=tk.DISABLED)
-        self.fringe_model_status.set(format_fringe_model_status(None, None, None))
+        self._set_fringe_model_status(None, None, None)
 
     def reset_average(self) -> None:
         if self._backend is not None:
@@ -804,7 +836,7 @@ class InterferometryApp(tk.Tk):
         if config is None:
             return
 
-        sky_freq_mhz = config.observing_frequency_mhz + result.frequency_offsets_hz / 1_000_000.0
+        sky_freq_mhz = sky_frequencies_hz(config, result.frequency_offsets_hz) / 1_000_000.0
         interferogram_mag = np.abs(result.interferogram)
         self._last_interferogram_mag = interferogram_mag
         spectrum_mag = np.abs(result.cross_spectrum)
@@ -817,8 +849,17 @@ class InterferometryApp(tk.Tk):
         continuum, continuum_error = self._estimate_broadband_visibility(
             result,
             config,
+            result.cross_spectrum,
             peak_lag_bin,
         )
+        raw_continuum = None
+        if config.fringe_stop_mode == "Backend":
+            raw_continuum, _raw_continuum_error = self._estimate_broadband_visibility(
+                result,
+                config,
+                result.raw_cross_spectrum,
+                peak_lag_bin,
+            )
         continuum_text = "Continuum SNR: off"
         if self.continuum_snr_mode.get() == "on":
             if continuum is not None:
@@ -832,10 +873,23 @@ class InterferometryApp(tk.Tk):
                 continuum_text = f"Continuum SNR: {continuum_error}"
 
         if continuum is not None:
-            stopped_visibility = apply_display_fringe_stop(continuum.visibility, model)
+            raw_visibility = (
+                raw_continuum.visibility
+                if raw_continuum is not None
+                else continuum.visibility
+            )
+            if config.fringe_stop_mode == "Backend":
+                stopped_visibility = continuum.visibility
+                iq_visibility = stopped_visibility
+            elif config.fringe_stop_mode == "Display":
+                stopped_visibility = apply_display_fringe_stop(continuum.visibility, model)
+                iq_visibility = continuum.visibility
+            else:
+                stopped_visibility = continuum.visibility
+                iq_visibility = continuum.visibility
             self.visibility_status.set(format_visibility_status(continuum))
-            self._set_fringe_model_status(model, continuum.visibility, stopped_visibility)
-            self._append_fringe_sample(continuum.visibility, stopped_visibility)
+            self._set_fringe_model_status(model, raw_visibility, stopped_visibility)
+            self._append_fringe_sample(iq_visibility, raw_visibility, stopped_visibility)
             self._record_visibility_if_needed(config, continuum, peak_lag_bin)
         else:
             self.visibility_status.set(format_visibility_status(None))
@@ -895,10 +949,10 @@ class InterferometryApp(tk.Tk):
 
         self.canvas.draw_idle()
 
-    def _estimate_broadband_visibility(self, result, config, peak_lag_bin: float):
+    def _estimate_broadband_visibility(self, result, config, cross_spectrum, peak_lag_bin: float):
         try:
             continuum = estimate_broadband_continuum_snr(
-                result.cross_spectrum,
+                cross_spectrum,
                 result.frequency_offsets_hz,
                 peak_lag_bin,
                 config.sample_rate_hz,
@@ -925,15 +979,20 @@ class InterferometryApp(tk.Tk):
         if hasattr(self, "fringe_i_line"):
             self._draw_fringe_history(draw=True)
 
-    def _append_fringe_sample(self, visibility: complex, stopped_visibility: complex) -> None:
+    def _append_fringe_sample(
+        self,
+        iq_visibility: complex,
+        raw_visibility: complex,
+        stopped_visibility: complex,
+    ) -> None:
         now = monotonic()
         if self._fringe_history_start is None:
             self._fringe_history_start = now
         elapsed = now - self._fringe_history_start
         self._fringe_time_history.append(elapsed)
-        self._fringe_i_history.append(float(np.real(visibility)))
-        self._fringe_q_history.append(float(np.imag(visibility)))
-        self._fringe_raw_phase_history.append(float(np.angle(visibility)))
+        self._fringe_i_history.append(float(np.real(iq_visibility)))
+        self._fringe_q_history.append(float(np.imag(iq_visibility)))
+        self._fringe_raw_phase_history.append(float(np.angle(raw_visibility)))
         self._fringe_stopped_phase_history.append(float(np.angle(stopped_visibility)))
 
         oldest_time = elapsed - FRINGE_HISTORY_MAX_SECONDS
@@ -960,6 +1019,8 @@ class InterferometryApp(tk.Tk):
             self.fringe_raw_phase_line.set_data([], [])
             self.fringe_stopped_phase_line.set_data([], [])
             self._update_stopped_phase_label(None)
+            self._latest_stopped_phase_rate_deg_s = None
+            self._refresh_fringe_model_status()
             self.ax_fringe_time.set_xlim(0.0, window_seconds)
             self.ax_fringe_phase.set_xlim(0.0, window_seconds)
             self.ax_fringe_phase.set_ylim(-180.0, 180.0)
@@ -993,6 +1054,8 @@ class InterferometryApp(tk.Tk):
             stopped_phase_values[visible],
         )
         self._update_stopped_phase_label(stopped_phase_rate)
+        self._latest_stopped_phase_rate_deg_s = stopped_phase_rate
+        self._refresh_fringe_model_status()
         if display_times.size > FRINGE_DISPLAY_MAX_POINTS:
             step = int(np.ceil(display_times.size / FRINGE_DISPLAY_MAX_POINTS))
             display_times = display_times[::step]
@@ -1025,9 +1088,22 @@ class InterferometryApp(tk.Tk):
         model,
         raw_visibility: complex | None,
         stopped_visibility: complex | None,
+        stopped_phase_rate_deg_s: float | None = None,
     ) -> None:
+        self._latest_fringe_model = model
+        self._latest_raw_visibility = raw_visibility
+        self._latest_stopped_visibility = stopped_visibility
+        self._latest_stopped_phase_rate_deg_s = stopped_phase_rate_deg_s
+        self._refresh_fringe_model_status()
+
+    def _refresh_fringe_model_status(self) -> None:
         self.fringe_model_status.set(
-            format_fringe_model_status(model, raw_visibility, stopped_visibility)
+            format_fringe_model_status(
+                self._latest_fringe_model,
+                self._latest_raw_visibility,
+                self._latest_stopped_visibility,
+                self._latest_stopped_phase_rate_deg_s,
+            )
         )
 
     def _target_mode_value(self) -> str:
@@ -1155,6 +1231,12 @@ class InterferometryApp(tk.Tk):
 
         values["observing_frequency_mhz"] = observing_frequency_mhz
         values.pop("lnb_lo_frequency_mhz")
+        values["fringe_stop_mode"] = self.fringe_stop_mode.get()
+        values["frequency_sideband"] = self.frequency_sideband.get()
+        if values["fringe_stop_mode"] not in FRINGE_STOP_OPTIONS:
+            raise ValueError("Fringe stop mode is invalid.")
+        if values["frequency_sideband"] not in FREQUENCY_SIDEBAND_OPTIONS:
+            raise ValueError("RF sideband mode is invalid.")
         return ObservationConfig(**values)
 
     def _should_draw_result(self) -> bool:
@@ -1344,6 +1426,8 @@ class InterferometryApp(tk.Tk):
                         "source_dec_deg": config.dec_deg,
                         "observer_lat_deg": config.observer_lat_deg,
                         "observer_lon_deg": config.observer_lon_deg,
+                        "fringe_stop_mode": config.fringe_stop_mode,
+                        "frequency_sideband": config.frequency_sideband,
                         "lag_bin": peak_lag_bin,
                         "visibility_real": continuum.visibility.real,
                         "visibility_imag": continuum.visibility.imag,
@@ -1364,6 +1448,8 @@ class InterferometryApp(tk.Tk):
         settings = {
             "source_mode": self.source_mode.get(),
             "target_mode": self.target_mode.get(),
+            "fringe_stop_mode": self.fringe_stop_mode.get(),
+            "frequency_sideband": self.frequency_sideband.get(),
             "spectrum_plot_mode": self.spectrum_plot_mode.get(),
             "phase_plot_mode": self.phase_plot_mode.get(),
             "interferogram_autoscale": self.interferogram_autoscale.get(),
@@ -1448,9 +1534,16 @@ def estimate_phase_rate_deg_s(times_s: np.ndarray, phase_rad: np.ndarray) -> flo
 
 
 def format_stopped_phase_label(rate_deg_s: float | None) -> str:
-    if rate_deg_s is None or not np.isfinite(rate_deg_s):
+    rate_text = format_phase_rate_value(rate_deg_s)
+    if rate_text == "--":
         return "Stopped phase (-- deg/s)"
-    return f"Stopped phase ({rate_deg_s:+.3f} deg/s)"
+    return f"Stopped phase ({rate_text} deg/s)"
+
+
+def format_phase_rate_value(rate_deg_s: float | None) -> str:
+    if rate_deg_s is None or not np.isfinite(rate_deg_s):
+        return "--"
+    return f"{rate_deg_s:+.3f}"
 
 
 def resolve_automatic_target_coordinates(
@@ -1554,6 +1647,7 @@ def format_fringe_model_status(
     model,
     raw_visibility: complex | None,
     stopped_visibility: complex | None,
+    stopped_phase_rate_deg_s: float | None = None,
 ) -> str:
     if model is None:
         return "\n".join(
@@ -1563,7 +1657,7 @@ def format_fringe_model_status(
                 "Phase -- deg",
                 "Rate -- Hz (-- deg/s)",
                 "Raw vis phase -- deg",
-                "Stopped phase -- deg",
+                "Stopped phase -- deg, rate -- deg/s",
             )
         )
 
@@ -1577,6 +1671,7 @@ def format_fringe_model_status(
     else:
         raw_phase_text = f"{wrap_degrees(np.degrees(np.angle(raw_visibility))):+.1f}"
         stopped_phase_text = f"{wrap_degrees(np.degrees(np.angle(stopped_visibility))):+.1f}"
+    stopped_rate_text = format_phase_rate_value(stopped_phase_rate_deg_s)
     return "\n".join(
         (
             f"Fringe model {model.when_utc.strftime('%H:%M:%S')} UTC",
@@ -1584,7 +1679,7 @@ def format_fringe_model_status(
             f"Phase {model_phase_deg:+.1f} deg",
             f"Rate {rate_hz:+.4f} Hz ({rate_deg_s:+.1f} deg/s)",
             f"Raw vis phase {raw_phase_text} deg",
-            f"Stopped phase {stopped_phase_text} deg",
+            f"Stopped phase {stopped_phase_text} deg, rate {stopped_rate_text} deg/s",
         )
     )
 
@@ -1603,6 +1698,8 @@ def fringe_reset_signature(
         config.baseline_east_m,
         config.baseline_north_m,
         config.baseline_up_m,
+        config.fringe_stop_mode,
+        config.frequency_sideband,
     )
     if target_mode == MANUAL_TARGET_SOURCE:
         signature += (config.ra_deg, config.dec_deg)
@@ -1792,6 +1889,10 @@ def load_settings() -> dict[str, str]:
         settings["source_mode"] = DEFAULT_SETTINGS["source_mode"]
     if settings["target_mode"] not in TARGET_SOURCE_OPTIONS:
         settings["target_mode"] = DEFAULT_SETTINGS["target_mode"]
+    if settings["fringe_stop_mode"] not in FRINGE_STOP_OPTIONS:
+        settings["fringe_stop_mode"] = DEFAULT_SETTINGS["fringe_stop_mode"]
+    if settings["frequency_sideband"] not in FREQUENCY_SIDEBAND_OPTIONS:
+        settings["frequency_sideband"] = DEFAULT_SETTINGS["frequency_sideband"]
     for key in (
         "spectrum_plot_mode",
         "phase_plot_mode",

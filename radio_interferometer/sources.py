@@ -36,6 +36,8 @@ class ObservationConfig:
     b210_queue_blocks: int = 32
     b210_process_blocks_per_update: int = 8
     b210_device_args: str = ""
+    fringe_stop_mode: str = "Display"
+    frequency_sideband: str = "LO - IF"
 
     @property
     def sample_rate_hz(self) -> float:
@@ -48,6 +50,19 @@ class ObservationConfig:
     @property
     def intermediate_frequency_hz(self) -> float:
         return self.intermediate_frequency_mhz * 1_000_000.0
+
+
+@dataclass(frozen=True)
+class SampleBlock:
+    """A paired two-channel sample block with stream-relative timing metadata."""
+
+    antenna_a: np.ndarray
+    antenna_b: np.ndarray
+    sample_index: int = 0
+
+    def __iter__(self):
+        yield self.antenna_a
+        yield self.antenna_b
 
 
 @dataclass(frozen=True)
@@ -78,7 +93,7 @@ class SampleSource:
     def stop(self) -> None:
         raise NotImplementedError
 
-    def read(self, sample_count: int) -> tuple[np.ndarray, np.ndarray]:
+    def read(self, sample_count: int) -> SampleBlock:
         raise NotImplementedError
 
     def update_config(self, config: ObservationConfig) -> None:
@@ -110,12 +125,13 @@ class SimulatedInterferometerSource(SampleSource):
     def update_config(self, config: ObservationConfig) -> None:
         self.config = config
 
-    def read(self, sample_count: int) -> tuple[np.ndarray, np.ndarray]:
+    def read(self, sample_count: int) -> SampleBlock:
         if not self._running:
             raise RuntimeError("Sample source is not running.")
 
         rate = self.config.sample_rate_hz
-        indices = np.arange(sample_count, dtype=np.float64) + self._sample_index
+        sample_index = self._sample_index
+        indices = np.arange(sample_count, dtype=np.float64) + sample_index
         self._sample_index += sample_count
 
         # Place a synthetic source at 11 percent of the visible passband.
@@ -134,7 +150,11 @@ class SimulatedInterferometerSource(SampleSource):
         noise_b = noise_scale * (
             self._rng.normal(size=sample_count) + 1j * self._rng.normal(size=sample_count)
         )
-        return (antenna_a + noise_a).astype(np.complex64), (antenna_b + noise_b).astype(np.complex64)
+        return SampleBlock(
+            (antenna_a + noise_a).astype(np.complex64),
+            (antenna_b + noise_b).astype(np.complex64),
+            sample_index,
+        )
 
 
 class B210SoapySource(SampleSource):
@@ -148,7 +168,7 @@ class B210SoapySource(SampleSource):
         self._stop_event = Event()
         self._queue_ready = Event()
         self._queue_lock = Lock()
-        self._queued_blocks: deque[tuple[np.ndarray, np.ndarray]] = deque()
+        self._queued_blocks: deque[SampleBlock] = deque()
         self._stream_error: Exception | None = None
         self._overflow_count = 0
         self._timeout_count = 0
@@ -157,6 +177,8 @@ class B210SoapySource(SampleSource):
         self._chunk_count = 0
         self._pending_a = np.empty(0, dtype=np.complex64)
         self._pending_b = np.empty(0, dtype=np.complex64)
+        self._pending_start_index = 0
+        self._next_sample_index = 0
 
     def start(self) -> None:
         try:
@@ -231,6 +253,8 @@ class B210SoapySource(SampleSource):
         self._chunk_count = 0
         self._pending_a = np.empty(0, dtype=np.complex64)
         self._pending_b = np.empty(0, dtype=np.complex64)
+        self._pending_start_index = 0
+        self._next_sample_index = 0
         self._read_thread = Thread(target=self._stream_worker, name="B210StreamReader", daemon=True)
         self._read_thread.start()
 
@@ -256,6 +280,8 @@ class B210SoapySource(SampleSource):
             self._queued_blocks.clear()
         self._pending_a = np.empty(0, dtype=np.complex64)
         self._pending_b = np.empty(0, dtype=np.complex64)
+        self._pending_start_index = 0
+        self._next_sample_index = 0
 
     def update_config(self, config: ObservationConfig) -> None:
         if self._sdr is None:
@@ -303,7 +329,7 @@ class B210SoapySource(SampleSource):
 
         self.config = config
 
-    def read(self, sample_count: int) -> tuple[np.ndarray, np.ndarray]:
+    def read(self, sample_count: int) -> SampleBlock:
         if self._sdr is None or self._rx_stream is None or self._read_thread is None:
             raise RuntimeError("B210 source is not running.")
 
@@ -370,7 +396,14 @@ class B210SoapySource(SampleSource):
                     raise RuntimeError(f"B210 read failed with code {result.ret}.")
 
                 self._chunk_count += 1
-                self._queue_stream_chunk(buffs[0][: result.ret], buffs[1][: result.ret], block_size)
+                chunk_start_index = self._next_sample_index
+                self._next_sample_index += int(result.ret)
+                self._queue_stream_chunk(
+                    buffs[0][: result.ret],
+                    buffs[1][: result.ret],
+                    block_size,
+                    chunk_start_index,
+                )
         except Exception as exc:
             self._stream_error = exc
             self._queue_ready.set()
@@ -380,18 +413,24 @@ class B210SoapySource(SampleSource):
         antenna_a: np.ndarray,
         antenna_b: np.ndarray,
         block_size: int,
+        chunk_start_index: int,
     ) -> None:
         if self._pending_a.size:
+            combined_start_index = self._pending_start_index
             antenna_a = np.concatenate((self._pending_a, antenna_a))
             antenna_b = np.concatenate((self._pending_b, antenna_b))
+        else:
+            combined_start_index = chunk_start_index
 
         complete_blocks = antenna_a.size // block_size
         if complete_blocks == 0:
             self._pending_a = antenna_a.copy()
             self._pending_b = antenna_b.copy()
+            self._pending_start_index = combined_start_index
             return
 
         used_samples = complete_blocks * block_size
+        pending_start_index = combined_start_index + used_samples
         max_queued_blocks = self._max_queued_blocks()
         with self._queue_lock:
             free_blocks = max_queued_blocks - len(self._queued_blocks)
@@ -399,6 +438,7 @@ class B210SoapySource(SampleSource):
                 self._dropped_count += complete_blocks
                 self._pending_a = antenna_a[used_samples:].copy()
                 self._pending_b = antenna_b[used_samples:].copy()
+                self._pending_start_index = pending_start_index
                 return
 
             blocks_to_queue = min(complete_blocks, free_blocks)
@@ -409,9 +449,10 @@ class B210SoapySource(SampleSource):
                 start = block_index * block_size
                 stop = start + block_size
                 self._queued_blocks.append(
-                    (
+                    SampleBlock(
                         antenna_a[start:stop].copy(),
                         antenna_b[start:stop].copy(),
+                        combined_start_index + start,
                     )
                 )
                 self._read_count += 1
@@ -419,6 +460,7 @@ class B210SoapySource(SampleSource):
 
         self._pending_a = antenna_a[used_samples:].copy()
         self._pending_b = antenna_b[used_samples:].copy()
+        self._pending_start_index = pending_start_index
 
 
 def parse_device_args(raw_args: str) -> dict[str, str]:
@@ -692,6 +734,41 @@ def fringe_model(
         delay_s=delay_s,
         phase_rad=phase_rad,
         phase_rate_rad_s=phase_rate_rad_s,
+    )
+
+
+def sky_frequencies_hz(config: ObservationConfig, frequency_offsets_hz: np.ndarray) -> np.ndarray:
+    """Map complex-baseband FFT offsets onto RF sky frequencies."""
+
+    offsets = np.asarray(frequency_offsets_hz, dtype=np.float64)
+    if config.frequency_sideband == "LO - IF":
+        return config.observing_frequency_hz - offsets
+    if config.frequency_sideband == "LO + IF":
+        return config.observing_frequency_hz + offsets
+    raise ValueError("Frequency sideband must be 'LO - IF' or 'LO + IF'.")
+
+
+def fringe_stop_phasor(
+    config: ObservationConfig,
+    frequency_offsets_hz: np.ndarray,
+    delay_s: float,
+) -> np.ndarray:
+    """Return the East * conj(West) phase correction for every RF bin."""
+
+    return np.exp(2j * pi * sky_frequencies_hz(config, frequency_offsets_hz) * delay_s)
+
+
+def fringe_stop_correction(
+    config: ObservationConfig,
+    frequency_offsets_hz: np.ndarray,
+    when: datetime | None = None,
+) -> np.ndarray:
+    """Return a per-bin geometric fringe-stopping correction for a given time."""
+
+    return fringe_stop_phasor(
+        config,
+        frequency_offsets_hz,
+        geometric_delay_seconds(config, when),
     )
 
 
