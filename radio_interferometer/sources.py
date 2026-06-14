@@ -38,6 +38,8 @@ class ObservationConfig:
     b210_device_args: str = ""
     fringe_stop_mode: str = "Display"
     frequency_sideband: str = "LO - IF"
+    instrumental_delay_ns: float = 0.0
+    instrumental_phase_deg: float = 0.0
 
     @property
     def sample_rate_hz(self) -> float:
@@ -758,6 +760,18 @@ def fringe_stop_phasor(
     return np.exp(2j * pi * sky_frequencies_hz(config, frequency_offsets_hz) * delay_s)
 
 
+def instrumental_calibration_phasor(
+    config: ObservationConfig,
+    frequency_offsets_hz: np.ndarray,
+) -> np.ndarray:
+    """Return the static instrumental phase/delay correction for every RF bin."""
+
+    sky_offsets_hz = sky_frequencies_hz(config, frequency_offsets_hz) - config.observing_frequency_hz
+    delay_s = config.instrumental_delay_ns * 1e-9
+    phase_rad = radians(config.instrumental_phase_deg)
+    return np.exp(1j * (2.0 * pi * sky_offsets_hz * delay_s + phase_rad))
+
+
 def fringe_stop_correction(
     config: ObservationConfig,
     frequency_offsets_hz: np.ndarray,
@@ -765,11 +779,12 @@ def fringe_stop_correction(
 ) -> np.ndarray:
     """Return a per-bin geometric fringe-stopping correction for a given time."""
 
-    return fringe_stop_phasor(
+    geometric = fringe_stop_phasor(
         config,
         frequency_offsets_hz,
         geometric_delay_seconds(config, when),
     )
+    return geometric * instrumental_calibration_phasor(config, frequency_offsets_hz)
 
 
 def horizontal_coordinates(

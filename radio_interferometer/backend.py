@@ -308,6 +308,8 @@ def build_status(
             "active_bandwidth_mhz": correlator.config.sample_rate_hz / 1_000_000.0,
             "active_fringe_stop_mode": getattr(source_config, "fringe_stop_mode", "--"),
             "active_frequency_sideband": getattr(source_config, "frequency_sideband", "--"),
+            "active_instrumental_delay_ns": getattr(source_config, "instrumental_delay_ns", "--"),
+            "active_instrumental_phase_deg": getattr(source_config, "instrumental_phase_deg", "--"),
         }
     )
     return status
@@ -334,6 +336,8 @@ def requires_correlator_rebuild(old: ObservationConfig, new: ObservationConfig) 
         or old.averaging_blocks != new.averaging_blocks
         or old.fringe_stop_mode != new.fringe_stop_mode
         or old.frequency_sideband != new.frequency_sideband
+        or old.instrumental_delay_ns != new.instrumental_delay_ns
+        or old.instrumental_phase_deg != new.instrumental_phase_deg
     )
 
 

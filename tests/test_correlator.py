@@ -8,7 +8,12 @@ from radio_interferometer.correlator import (
     estimate_broadband_continuum_snr,
     estimate_peak_snr,
 )
-from radio_interferometer.sources import ObservationConfig, fringe_stop_phasor, sky_frequencies_hz
+from radio_interferometer.sources import (
+    ObservationConfig,
+    fringe_stop_phasor,
+    instrumental_calibration_phasor,
+    sky_frequencies_hz,
+)
 
 
 def test_fx_correlator_returns_requested_bin_count() -> None:
@@ -151,6 +156,34 @@ def test_fringe_stop_phasor_removes_east_conj_west_band_phase() -> None:
     corrected = raw_cross * fringe_stop_phasor(config, offsets, delay_s)
 
     assert np.max(np.abs(corrected - 1.0)) < 1e-12
+
+
+def test_instrumental_calibration_applies_delay_slope_and_phase_offset() -> None:
+    offsets = np.array([-1_000_000.0, 0.0, 1_000_000.0])
+    config = make_config(
+        frequency_sideband="LO + IF",
+        instrumental_delay_ns=1.0,
+        instrumental_phase_deg=30.0,
+    )
+
+    phasor = instrumental_calibration_phasor(config, offsets)
+    phase = np.unwrap(np.angle(phasor))
+
+    assert phase[1] == pytest.approx(np.radians(30.0), abs=1e-12)
+    assert phase[2] - phase[0] == pytest.approx(2.0 * np.pi * 2_000_000.0e-9)
+
+
+def test_instrumental_delay_respects_low_sideband_inversion() -> None:
+    offsets = np.array([-1_000_000.0, 1_000_000.0])
+    high_side = make_config(frequency_sideband="LO + IF", instrumental_delay_ns=1.0)
+    low_side = make_config(frequency_sideband="LO - IF", instrumental_delay_ns=1.0)
+
+    high_phase = np.unwrap(np.angle(instrumental_calibration_phasor(high_side, offsets)))
+    low_phase = np.unwrap(np.angle(instrumental_calibration_phasor(low_side, offsets)))
+
+    assert high_phase[1] - high_phase[0] == pytest.approx(
+        -(low_phase[1] - low_phase[0])
+    )
 
 
 def test_fx_correlator_applies_cross_correction_before_averaging() -> None:

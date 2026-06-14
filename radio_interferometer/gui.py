@@ -62,6 +62,8 @@ FIELD_DEFAULTS = [
     ("baseline_east_m", "Baseline east (m)", "6.0"),
     ("baseline_north_m", "Baseline north (m)", "0.0"),
     ("baseline_up_m", "Baseline up (m)", "0.0"),
+    ("instrumental_delay_ns", "Instrument delay (ns)", "0.0"),
+    ("instrumental_phase_deg", "Instrument phase (deg)", "0.0"),
     ("b210_gain_db", "B210 gain (dB)", "70.0"),
     ("b210_read_timeout_ms", "B210 read timeout (ms)", "1000"),
     ("b210_stream_chunk_samples", "B210 stream chunk samples", "262144"),
@@ -113,6 +115,8 @@ VISIBILITY_CSV_FIELDS = [
     "observer_lon_deg",
     "fringe_stop_mode",
     "frequency_sideband",
+    "instrumental_delay_ns",
+    "instrumental_phase_deg",
     "lag_bin",
     "visibility_real",
     "visibility_imag",
@@ -1228,6 +1232,10 @@ class InterferometryApp(tk.Tk):
             raise ValueError("B210 FFT blocks/update must be at least 1.")
         if values["b210_gain_db"] < 0:
             raise ValueError("B210 gain must not be negative.")
+        if not np.isfinite(values["instrumental_delay_ns"]):
+            raise ValueError("Instrument delay must be finite.")
+        if not np.isfinite(values["instrumental_phase_deg"]):
+            raise ValueError("Instrument phase must be finite.")
 
         values["observing_frequency_mhz"] = observing_frequency_mhz
         values.pop("lnb_lo_frequency_mhz")
@@ -1428,6 +1436,8 @@ class InterferometryApp(tk.Tk):
                         "observer_lon_deg": config.observer_lon_deg,
                         "fringe_stop_mode": config.fringe_stop_mode,
                         "frequency_sideband": config.frequency_sideband,
+                        "instrumental_delay_ns": config.instrumental_delay_ns,
+                        "instrumental_phase_deg": config.instrumental_phase_deg,
                         "lag_bin": peak_lag_bin,
                         "visibility_real": continuum.visibility.real,
                         "visibility_imag": continuum.visibility.imag,
@@ -1700,6 +1710,8 @@ def fringe_reset_signature(
         config.baseline_up_m,
         config.fringe_stop_mode,
         config.frequency_sideband,
+        config.instrumental_delay_ns,
+        config.instrumental_phase_deg,
     )
     if target_mode == MANUAL_TARGET_SOURCE:
         signature += (config.ra_deg, config.dec_deg)

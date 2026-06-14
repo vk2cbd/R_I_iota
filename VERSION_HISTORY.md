@@ -1,5 +1,16 @@
 # Version History
 
+## 0.5.1-iota - Instrumental Phase Calibration
+
+- Added live GUI fields for instrumental delay in ns and instrumental phase in
+  degrees.
+- Applied the instrumental delay as a band-centred phase-slope correction, with
+  RF sideband inversion respected.
+- Applied the instrumental phase as a constant complex visibility rotation.
+- Reset the correlator average when either instrumental calibration term is
+  changed so old and new phase corrections are not mixed.
+- Recorded the instrumental calibration values in visibility CSV output.
+
 ## 0.5.0-iota - Backend Fringe Stopping
 
 - Added a new Iota app line with backend fringe stopping enabled by default.
