@@ -816,9 +816,6 @@ class InterferometryApp(tk.Tk):
                 self.after(GUI_REFRESH_MS, self._update_loop)
                 return
 
-            if not self._backend.is_alive():
-                raise RuntimeError("Backend process stopped unexpectedly.")
-
             update = self._backend.poll_latest()
             if update is not None:
                 self._latest_backend_status = update.status
@@ -826,6 +823,14 @@ class InterferometryApp(tk.Tk):
                     raise RuntimeError(str(update.status["error"]))
                 if update.result is not None and self._should_draw_result():
                     self._draw_result(update.result)
+
+            if not self._backend.is_alive():
+                raise RuntimeError(
+                    format_backend_stopped_message(
+                        self._backend.exitcode(),
+                        self._latest_backend_status,
+                    )
+                )
 
             self._set_runtime_status()
         except Exception as exc:
@@ -1631,6 +1636,14 @@ def format_runtime_status_text(averaging_status: str, status: dict[str, object])
             f"ovf {status.get('overflows', 0)}, to {status.get('timeouts', 0)}"
         ),
     )
+
+
+def format_backend_stopped_message(exitcode: int | None, status: dict[str, object]) -> str:
+    if "error" in status:
+        return str(status["error"])
+    if exitcode is None:
+        return "Backend process stopped unexpectedly."
+    return f"Backend process stopped unexpectedly with exit code {exitcode}."
 
 
 def format_visibility_status(continuum) -> str:

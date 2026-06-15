@@ -1,5 +1,14 @@
 # Version History
 
+## 0.5.2-iota - Backend Stop Diagnostics
+
+- Drained backend status updates before checking whether the worker process is
+  still alive so reported backend exceptions are not hidden by the generic
+  watchdog message.
+- Added backend exception type details to worker error reports.
+- Added the backend process exit code to the GUI error when the worker exits
+  without reporting a Python exception.
+
 ## 0.5.1-iota - Instrumental Phase Calibration
 
 - Added live GUI fields for instrumental delay in ns and instrumental phase in

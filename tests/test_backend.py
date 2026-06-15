@@ -1,5 +1,6 @@
 from radio_interferometer.backend import (
     build_status,
+    format_backend_exception,
     make_correlator,
     requires_correlator_rebuild,
     requires_source_restart,
@@ -54,3 +55,8 @@ def test_backend_status_reports_active_correlator_config() -> None:
 
     assert status["active_bins"] == 1024
     assert status["active_averaging_blocks"] == 128
+
+
+def test_backend_exception_formatter_includes_type_for_empty_message() -> None:
+    assert format_backend_exception(RuntimeError("")) == "RuntimeError"
+    assert format_backend_exception(ValueError("bad config")) == "ValueError: bad config"

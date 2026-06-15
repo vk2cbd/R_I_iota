@@ -8,6 +8,7 @@ from math import ceil
 from multiprocessing import Event, Process, Queue, get_context
 from queue import Empty, Full
 from time import monotonic
+import traceback
 from typing import Any
 
 from .correlator import CorrelatorConfig, CorrelatorResult, FXCorrelator
@@ -98,6 +99,9 @@ class CorrelatorBackendProcess:
 
     def is_alive(self) -> bool:
         return self._process.is_alive()
+
+    def exitcode(self) -> int | None:
+        return self._process.exitcode
 
     def _send_command(self, command: dict[str, Any]) -> None:
         try:
@@ -193,7 +197,9 @@ def backend_worker(
             BackendUpdate(
                 None,
                 {
-                    "error": str(exc),
+                    "error": format_backend_exception(exc),
+                    "error_type": exc.__class__.__name__,
+                    "traceback": traceback.format_exc(),
                     "processed": processed_count,
                     "overflows": overflow_count,
                 },
@@ -252,6 +258,13 @@ def apply_pending_commands(
 
 class StopBackend(Exception):
     """Internal signal used to exit the backend worker."""
+
+
+def format_backend_exception(exc: Exception) -> str:
+    detail = str(exc).strip()
+    if detail:
+        return f"{exc.__class__.__name__}: {detail}"
+    return exc.__class__.__name__
 
 
 def make_source(config: ObservationConfig, source_mode: str) -> SampleSource:

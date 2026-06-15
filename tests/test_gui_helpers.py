@@ -8,6 +8,7 @@ from radio_interferometer.gui import (
     apply_display_fringe_stop,
     apply_target_display_rounding,
     estimate_phase_rate_deg_s,
+    format_backend_stopped_message,
     format_ra_hours,
     format_fringe_model_status,
     format_runtime_status_text,
@@ -79,6 +80,17 @@ def test_readout_formatters_keep_stable_line_counts() -> None:
     ).splitlines()
     assert len(fringe_lines) == 6
     assert fringe_lines[-1] == "Stopped phase +90.0 deg, rate +0.150 deg/s"
+
+
+def test_backend_stopped_message_prefers_reported_error() -> None:
+    assert (
+        format_backend_stopped_message(1, {"error": "RuntimeError: B210 stream queue is empty."})
+        == "RuntimeError: B210 stream queue is empty."
+    )
+    assert format_backend_stopped_message(-11, {}) == (
+        "Backend process stopped unexpectedly with exit code -11."
+    )
+    assert format_backend_stopped_message(None, {}) == "Backend process stopped unexpectedly."
 
 
 def test_display_fringe_stop_uses_east_conj_west_sign() -> None:
