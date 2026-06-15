@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 from radio_interferometer.gui import (
+    BACKEND_CRASH_LOG_PATH,
     apply_display_fringe_stop,
     apply_target_display_rounding,
     estimate_phase_rate_deg_s,
@@ -87,9 +88,9 @@ def test_backend_stopped_message_prefers_reported_error() -> None:
         format_backend_stopped_message(1, {"error": "RuntimeError: B210 stream queue is empty."})
         == "RuntimeError: B210 stream queue is empty."
     )
-    assert format_backend_stopped_message(-11, {}) == (
-        "Backend process stopped unexpectedly with exit code -11."
-    )
+    native_message = format_backend_stopped_message(-11, {})
+    assert native_message.startswith("Backend process stopped unexpectedly with exit code -11.")
+    assert str(BACKEND_CRASH_LOG_PATH) in native_message
     assert format_backend_stopped_message(None, {}) == "Backend process stopped unexpectedly."
 
 

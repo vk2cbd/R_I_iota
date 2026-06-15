@@ -19,7 +19,7 @@ from matplotlib.ticker import AutoMinorLocator
 from matplotlib.widgets import Button, Slider, TextBox
 
 from . import __version__
-from .backend import CorrelatorBackendProcess
+from .backend import BACKEND_CRASH_LOG_PATH, CorrelatorBackendProcess
 from .correlator import (
     estimate_broadband_continuum_snr,
     estimate_peak_snr,
@@ -1643,7 +1643,10 @@ def format_backend_stopped_message(exitcode: int | None, status: dict[str, objec
         return str(status["error"])
     if exitcode is None:
         return "Backend process stopped unexpectedly."
-    return f"Backend process stopped unexpectedly with exit code {exitcode}."
+    message = f"Backend process stopped unexpectedly with exit code {exitcode}."
+    if exitcode < 0:
+        message += f"\nCrash log: {BACKEND_CRASH_LOG_PATH}"
+    return message
 
 
 def format_visibility_status(continuum) -> str:

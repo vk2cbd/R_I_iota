@@ -1,5 +1,11 @@
 # Version History
 
+## 0.5.3-iota - Native Crash Log
+
+- Enabled Python faulthandler in the backend process so native crashes such as
+  Linux SIGSEGV exit code -11 write a backend stack trace when possible.
+- Added the backend crash log path to GUI errors for native backend exits.
+
 ## 0.5.2-iota - Backend Stop Diagnostics
 
 - Drained backend status updates before checking whether the worker process is

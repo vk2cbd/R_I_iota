@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import faulthandler
 from math import ceil
 from multiprocessing import Event, Process, Queue, get_context
+from pathlib import Path
 from queue import Empty, Full
 from time import monotonic
 import traceback
@@ -23,6 +25,7 @@ from .sources import (
 )
 
 BACKEND_RESULT_INTERVAL_S = 0.08
+BACKEND_CRASH_LOG_PATH = Path.home() / ".radio_interferometer_iota_backend_crash.log"
 
 
 @dataclass
@@ -128,6 +131,7 @@ def backend_worker(
     command_queue: Queue,
     stop_event: Event,
 ) -> None:
+    crash_log = open_backend_crash_log()
     source: SampleSource | None = None
     correlator: FXCorrelator | None = None
     overflow_count = 0
@@ -211,6 +215,25 @@ def backend_worker(
                 source.stop()
             except Exception:
                 pass
+        if crash_log is not None:
+            try:
+                faulthandler.disable()
+                crash_log.close()
+            except Exception:
+                pass
+
+
+def open_backend_crash_log():
+    try:
+        handle = BACKEND_CRASH_LOG_PATH.open("a", encoding="utf-8", buffering=1)
+        handle.write(
+            "\n"
+            f"--- backend start {datetime.now(timezone.utc).isoformat()} UTC ---\n"
+        )
+        faulthandler.enable(file=handle, all_threads=True)
+        return handle
+    except OSError:
+        return None
 
 
 def apply_pending_commands(
